@@ -330,7 +330,7 @@ final class SetupCommand extends Command
     private function envValues(array $config, bool $regenerateSecrets = false): array
     {
         $current = $this->envWriter->readKnownValues();
-        $projectName = $current['APP_NAME'] ?? $this->projectName();
+        $projectName = $this->resolvedProjectName($current);
         $postgresPassword = $this->secret('POSTGRES_PASSWORD', $current, $regenerateSecrets, 16);
         $mongoPassword = $this->secret('MONGO_INITDB_ROOT_PASSWORD', $current, $regenerateSecrets, 16);
         $values = [
@@ -470,6 +470,18 @@ final class SetupCommand extends Command
         $name = trim($name, '_');
 
         return $name !== '' ? $name : 'vortos_app';
+    }
+
+    /** @param array<string, string> $current */
+    private function resolvedProjectName(array $current): string
+    {
+        $appName = trim($current['APP_NAME'] ?? '');
+
+        if ($appName !== '' && !in_array(strtolower($appName), ['myapp', 'app', 'vortos_app'], true)) {
+            return $appName;
+        }
+
+        return $this->projectName();
     }
 
     /** @param array<string, string> $current */

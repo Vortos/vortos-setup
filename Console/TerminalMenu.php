@@ -61,7 +61,7 @@ final class TerminalMenu
                 }
             }
         } finally {
-            $this->stty($stty);
+            $this->stty($stty, true);
         }
     }
 
@@ -108,23 +108,13 @@ final class TerminalMenu
         return "\033" . ($next === false ? '' : $next) . ($last === false ? '' : $last);
     }
 
-    private function stty(string $args): ?string
+    private function stty(string $args, bool $literal = false): ?string
     {
-        $descriptor = [
-            0 => STDIN,
-            1 => ['pipe', 'w'],
-            2 => ['pipe', 'w'],
-        ];
-        $process = proc_open('stty ' . $args, $descriptor, $pipes);
-        if (!is_resource($process)) {
-            return null;
-        }
+        $command = 'stty ' . ($literal ? escapeshellarg($args) : $args) . ' < /dev/tty 2>/dev/null';
+        $output = [];
+        $status = 0;
+        exec($command, $output, $status);
 
-        $output = stream_get_contents($pipes[1]);
-        $error = stream_get_contents($pipes[2]);
-        fclose($pipes[1]);
-        fclose($pipes[2]);
-
-        return proc_close($process) === 0 ? trim((string) $output) : null;
+        return $status === 0 ? trim(implode("\n", $output)) : null;
     }
 }
