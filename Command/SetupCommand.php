@@ -10,7 +10,6 @@ use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Question\ChoiceQuestion;
-use Symfony\Component\Console\Question\ConfirmationQuestion;
 use Symfony\Component\Console\Style\SymfonyStyle;
 use Vortos\Docker\Service\DockerFilePublisher;
 use Vortos\Docker\Service\DockerPublishResult;
@@ -99,7 +98,7 @@ final class SetupCommand extends Command
         $this->banner($io);
 
         try {
-        $config = $this->resolveConfig($input, $output, $io, $state);
+            $config = $this->resolveConfig($input, $output, $io, $state);
         } catch (\InvalidArgumentException $e) {
             $io->error($e->getMessage());
             return Command::FAILURE;
@@ -112,10 +111,12 @@ final class SetupCommand extends Command
             ));
         }
 
-        if (!$this->confirmPlan($input, $io, $config, $dryRun)) {
+        $confirmedConfig = $this->confirmPlan($input, $output, $io, $config, $dryRun);
+        if ($confirmedConfig === null) {
             $io->warning('Setup cancelled. No files were changed.');
             return Command::SUCCESS;
         }
+        $config = $confirmedConfig;
 
         $checks = $this->checker->check(
             (bool) $config['docker'],
@@ -213,7 +214,38 @@ final class SetupCommand extends Command
             return ['preset' => $preset, 'profile' => null] + self::PRESETS[$preset];
         }
 
-        return $this->askPreset($input, $output, $io, (string) ($state['preset'] ?? 'docker-frankenphp'));
+        return $this->askProfile($input, $output, $io, (string) ($state['profile'] ?? 'docker'));
+    }
+
+    /** @return array<string, mixed> */
+    private function askProfile(InputInterface $input, OutputInterface $output, SymfonyStyle $io, string $defaultProfile): array
+    {
+        $choices = ['docker', 'minimal', 'custom'];
+        $defaultProfile = in_array($defaultProfile, $choices, true) ? $defaultProfile : 'docker';
+
+        $selected = ($this->terminalMenu ?? new TerminalMenu())->choose(
+            $input,
+            $output,
+            'Choose setup profile',
+            $choices,
+            $defaultProfile,
+        );
+
+        if ($selected === null) {
+            $question = new ChoiceQuestion('Choose setup profile', $choices, $defaultProfile);
+            $question->setErrorMessage('Profile %s is not valid.');
+
+            /** @var string $selected */
+            $selected = $io->askQuestion($question);
+        }
+
+        if ($selected === 'custom') {
+            return $this->askPreset($input, $output, $io, 'docker-frankenphp');
+        }
+
+        $preset = self::PROFILES[$selected];
+
+        return ['preset' => $preset, 'profile' => $selected] + self::PRESETS[$preset];
     }
 
     /** @return array<string, mixed> */
@@ -241,19 +273,42 @@ final class SetupCommand extends Command
         return ['preset' => $selected, 'profile' => 'custom'] + self::PRESETS[$selected];
     }
 
-    /** @param array<string, mixed> $config */
-    private function confirmPlan(InputInterface $input, SymfonyStyle $io, array $config, bool $dryRun): bool
+    /**
+     * @param array<string, mixed> $config
+     * @return ?array<string, mixed>
+     */
+    private function confirmPlan(
+        InputInterface $input,
+        OutputInterface $output,
+        SymfonyStyle $io,
+        array $config,
+        bool $dryRun,
+    ): ?array
     {
         if (!$input->isInteractive() || $input->getOption('preset') !== null) {
             $this->renderPlan($io, $config, $dryRun);
-            return true;
+            return $config;
         }
 
-        $this->renderPlan($io, $config, $dryRun);
+        while (true) {
+            $this->renderPlan($io, $config, $dryRun);
 
-        $question = new ConfirmationQuestion('Continue with this setup? [Y/n] ', true);
+            $question = new ChoiceQuestion('Review setup', ['Continue', 'Customize', 'Cancel'], 'Continue');
+            $question->setErrorMessage('Action %s is not valid.');
 
-        return (bool) $io->askQuestion($question);
+            /** @var string $action */
+            $action = $io->askQuestion($question);
+
+            if ($action === 'Continue') {
+                return $config;
+            }
+
+            if ($action === 'Cancel') {
+                return null;
+            }
+
+            $config = $this->askPreset($input, $output, $io, (string) $config['preset']);
+        }
     }
 
     /** @param array<string, mixed> $config */

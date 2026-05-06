@@ -36,8 +36,15 @@ final class TerminalMenu
         $output->writeln(sprintf('<info>%s</info>', $label));
 
         try {
+            $rendered = false;
+
             while (true) {
+                if ($rendered) {
+                    $this->clear($output, count($choices));
+                }
+
                 $this->render($output, $choices, $selected);
+                $rendered = true;
                 $key = $this->readKey();
 
                 if ($key === "\033[A") {
