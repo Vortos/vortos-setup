@@ -24,6 +24,7 @@ final class SetupCapabilityRegistry
             new StaticSetupCapability('runtime.phpfpm', 'PHP-FPM Docker', 'runtime', ['vortos/vortos-docker']),
             new StaticSetupCapability('runtime.local', 'Local PHP', 'runtime'),
             new StaticSetupCapability('write_db.postgres', 'PostgreSQL', 'write_db', ['vortos/vortos-persistence-dbal']),
+            new StaticSetupCapability('read_db.none', 'None', 'read_db'),
             new StaticSetupCapability('read_db.mongo', 'MongoDB', 'read_db', ['vortos/vortos-persistence-mongo']),
             new StaticSetupCapability('cache.redis', 'Redis', 'cache', ['vortos/vortos-cache']),
             new StaticSetupCapability('cache.in_memory', 'In-memory cache', 'cache', ['vortos/vortos-cache']),

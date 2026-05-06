@@ -13,6 +13,8 @@ use Symfony\Component\Console\Question\ChoiceQuestion;
 use Symfony\Component\Console\Style\SymfonyStyle;
 use Vortos\Docker\Service\DockerFilePublisher;
 use Vortos\Docker\Service\DockerPublishResult;
+use Vortos\Setup\Capability\SetupCapabilityInterface;
+use Vortos\Setup\Capability\SetupCapabilityRegistry;
 use Vortos\Setup\Console\TerminalMenu;
 use Vortos\Setup\Service\EnvironmentFileWriter;
 use Vortos\Setup\Service\SetupEnvironmentChecker;
@@ -69,6 +71,7 @@ final class SetupCommand extends Command
         private readonly SetupEnvironmentChecker $checker,
         private readonly DockerFilePublisher $dockerPublisher,
         private readonly ?TerminalMenu $terminalMenu = null,
+        private readonly ?SetupCapabilityRegistry $capabilityRegistry = null,
     ) {
         parent::__construct();
     }
@@ -95,7 +98,7 @@ final class SetupCommand extends Command
         $dryRun = (bool) $input->getOption('dry-run');
         $state = $this->stateStore->read();
 
-        $this->banner($io);
+        $this->banner($input, $output, $io);
 
         try {
             $config = $this->resolveConfig($input, $output, $io, $state);
@@ -188,7 +191,7 @@ final class SetupCommand extends Command
                     throw new \InvalidArgumentException('The custom profile requires interactive setup. Use --preset for non-interactive setup.');
                 }
 
-                return $this->askPreset($input, $output, $io, (string) ($state['preset'] ?? 'docker-frankenphp'));
+                return $this->askCustomConfig($input, $output, $io, $this->configFromPreset((string) ($state['preset'] ?? 'docker-frankenphp')));
             }
 
             if (!isset(self::PROFILES[$profile])) {
@@ -240,7 +243,7 @@ final class SetupCommand extends Command
         }
 
         if ($selected === 'custom') {
-            return $this->askPreset($input, $output, $io, 'docker-frankenphp');
+            return $this->askCustomConfig($input, $output, $io, $this->configFromPreset('docker-frankenphp'));
         }
 
         $preset = self::PROFILES[$selected];
@@ -271,6 +274,155 @@ final class SetupCommand extends Command
         $selected = $io->askQuestion($question);
 
         return ['preset' => $selected, 'profile' => 'custom'] + self::PRESETS[$selected];
+    }
+
+    /** @return array<string, mixed> */
+    private function askCustomConfig(
+        InputInterface $input,
+        OutputInterface $output,
+        SymfonyStyle $io,
+        array $config,
+    ): array {
+        $runtime = $this->capabilityValue($this->askCapability(
+            $input,
+            $output,
+            $io,
+            'runtime',
+            'Choose runtime',
+            'runtime.' . (string) $config['runtime'],
+        ));
+        $docker = $runtime !== 'local';
+        $writeDatabase = $this->capabilityValue($this->askCapability(
+            $input,
+            $output,
+            $io,
+            'write_db',
+            'Choose write database',
+            'write_db.postgres',
+        ));
+        $database = $docker ? 'docker-' . $writeDatabase : 'local-' . $writeDatabase;
+
+        $readDatabase = $this->capabilityValue($this->askCapability(
+            $input,
+            $output,
+            $io,
+            'read_db',
+            'Choose read database',
+            (bool) $config['mongo'] ? 'read_db.mongo' : 'read_db.none',
+        ));
+        $cache = $this->capabilityValue($this->askCapability(
+            $input,
+            $output,
+            $io,
+            'cache',
+            'Choose cache',
+            'cache.' . str_replace('-', '_', (string) $config['cache']),
+        ));
+        $messaging = $this->capabilityValue($this->askCapability(
+            $input,
+            $output,
+            $io,
+            'messaging',
+            'Choose messaging',
+            'messaging.' . str_replace('-', '_', (string) $config['messaging']),
+        ));
+
+        return [
+            'preset' => $this->presetForRuntime($runtime),
+            'profile' => 'custom',
+            'runtime' => $runtime,
+            'docker' => $docker,
+            'database' => $database,
+            'cache' => $cache,
+            'messaging' => $messaging,
+            'mongo' => $readDatabase === 'mongo',
+        ];
+    }
+
+    private function askCapability(
+        InputInterface $input,
+        OutputInterface $output,
+        SymfonyStyle $io,
+        string $category,
+        string $label,
+        string $default,
+    ): string {
+        $capabilities = $this->capabilities()->byCategory($category);
+        if ($capabilities === []) {
+            throw new \InvalidArgumentException(sprintf('No setup capabilities are available for "%s".', $category));
+        }
+
+        $choices = [];
+        foreach ($capabilities as $capability) {
+            $choices[$capability->key()] = $this->choiceLabel($capability);
+        }
+
+        return $this->askOption($input, $output, $io, $label, $choices, $default);
+    }
+
+    /**
+     * @param array<string, string> $choices
+     */
+    private function askOption(
+        InputInterface $input,
+        OutputInterface $output,
+        SymfonyStyle $io,
+        string $label,
+        array $choices,
+        string $default,
+    ): string {
+        $keys = array_keys($choices);
+        $default = in_array($default, $keys, true) ? $default : $keys[0];
+
+        $selected = ($this->terminalMenu ?? new TerminalMenu())->choose(
+            $input,
+            $output,
+            $label,
+            array_map(
+                static fn(string $key, string $description): string => sprintf('%s - %s', $key, $description),
+                $keys,
+                array_values($choices),
+            ),
+            sprintf('%s - %s', $default, $choices[$default]),
+        );
+
+        if ($selected === null) {
+            $question = new ChoiceQuestion(
+                $label,
+                array_map(
+                    static fn(string $key, string $description): string => sprintf('%s - %s', $key, $description),
+                    $keys,
+                    array_values($choices),
+                ),
+                array_search($default, $keys, true) ?: 0,
+            );
+            $question->setErrorMessage('Option %s is not valid.');
+
+            /** @var string $selected */
+            $selected = $io->askQuestion($question);
+        }
+
+        return substr($selected, 0, (int) strpos($selected, ' - '));
+    }
+
+    private function choiceLabel(SetupCapabilityInterface $capability): string
+    {
+        $packages = $capability->composerPackages();
+        $suffix = $packages === [] ? '' : sprintf(' (%s)', implode(', ', $packages));
+
+        return sprintf('%s - %s%s', $capability->key(), $capability->label(), $suffix);
+    }
+
+    private function capabilityValue(string $key): string
+    {
+        [, $value] = explode('.', $key, 2);
+
+        return str_replace('_', '-', $value);
+    }
+
+    private function capabilities(): SetupCapabilityRegistry
+    {
+        return $this->capabilityRegistry ?? SetupCapabilityRegistry::builtIn();
     }
 
     /**
@@ -307,7 +459,7 @@ final class SetupCommand extends Command
                 return null;
             }
 
-            $config = $this->askPreset($input, $output, $io, (string) $config['preset']);
+            $config = $this->askCustomConfig($input, $output, $io, $config);
         }
     }
 
@@ -320,10 +472,28 @@ final class SetupCommand extends Command
         }
         $io->writeln(sprintf('  Preset:    <info>%s</info>', (string) $config['preset']));
         $io->writeln(sprintf('  Runtime:   %s', (string) $config['runtime']));
-        $io->writeln(sprintf('  Database:  %s', (string) $config['database']));
+        $io->writeln(sprintf('  Write DB:  %s', (string) $config['database']));
+        $io->writeln(sprintf('  Read DB:   %s', (bool) $config['mongo'] ? 'mongo' : 'none'));
         $io->writeln(sprintf('  Cache:     %s', (string) $config['cache']));
         $io->writeln(sprintf('  Messaging: %s', (string) $config['messaging']));
         $io->writeln(sprintf('  Docker:    %s', (bool) $config['docker'] ? 'yes' : 'no'));
+    }
+
+    /** @return array<string, mixed> */
+    private function configFromPreset(string $preset): array
+    {
+        $preset = isset(self::PRESETS[$preset]) ? $preset : 'docker-frankenphp';
+
+        return ['preset' => $preset, 'profile' => 'custom'] + self::PRESETS[$preset];
+    }
+
+    private function presetForRuntime(string $runtime): string
+    {
+        return match ($runtime) {
+            'frankenphp' => 'docker-frankenphp',
+            'phpfpm' => 'docker-phpfpm',
+            default => 'local',
+        };
     }
 
     /** @param array<string, mixed> $config @return array<string, string> */
@@ -409,12 +579,41 @@ final class SetupCommand extends Command
         return $steps;
     }
 
-    private function banner(SymfonyStyle $io): void
+    private function banner(InputInterface $input, OutputInterface $output, SymfonyStyle $io): void
     {
         $io->writeln('');
-        $io->writeln('<fg=cyan;options=bold>Vortos Setup</>');
+        $io->writeln('<fg=cyan;options=bold> __     __  ___  ____ _____ ___  ____  </>');
+        $io->writeln('<fg=cyan;options=bold> \ \   / / / _ \|  _ \_   _/ _ \/ ___| </>');
+        $io->writeln('<fg=cyan;options=bold>  \ \ / / | | | | |_) || || | | \___ \ </>');
+        $io->writeln('<fg=cyan;options=bold>   \ V /  | |_| |  _ < | || |_| |___) |</>');
+        $io->writeln('<fg=cyan;options=bold>    \_/    \___/|_| \_\|_| \___/|____/ </>');
+        $io->writeln('<fg=cyan;options=bold> V O R T O S</>');
         $io->writeln('<fg=gray>Configure Docker or local development without editing secrets by hand.</>');
         $io->writeln('');
+
+        if (!$this->supportsAnimation($input, $output)) {
+            return;
+        }
+
+        foreach (['[=   ] Preparing setup', '[==  ] Reading project', '[=== ] Loading choices', '[====] Ready'] as $frame) {
+            $output->write(sprintf("\r<fg=green>%s</>", $frame));
+            usleep(80000);
+        }
+
+        $output->write("\r\033[2K");
+    }
+
+    private function supportsAnimation(InputInterface $input, OutputInterface $output): bool
+    {
+        if (!$input->isInteractive() || !$output->isDecorated()) {
+            return false;
+        }
+
+        if (getenv('CI') !== false || PHP_OS_FAMILY === 'Windows') {
+            return false;
+        }
+
+        return function_exists('stream_isatty') && stream_isatty(STDIN);
     }
 
     /** @param array<int, array{name: string, ok: bool, detail: string}> $checks */
