@@ -6,7 +6,12 @@ namespace Vortos\Setup\Service;
 
 final class SetupEnvironmentChecker
 {
-    public function __construct(private readonly string $projectDir) {}
+    private readonly string $projectDir;
+
+    public function __construct(string $projectDir)
+    {
+        $this->projectDir = realpath($projectDir) ?: $projectDir;
+    }
 
     /** @return array<int, array{name: string, ok: bool, detail: string}> */
     public function check(bool $dockerSelected, bool $redisSelected, bool $mongoSelected, bool $kafkaSelected): array

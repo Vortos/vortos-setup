@@ -6,6 +6,17 @@ namespace Vortos\Setup\Service;
 
 final class EnvironmentFileWriter
 {
+    private const SECTION_BEFORE = [
+        'APP_ENV' => 'Vortos setup',
+        'JWT_SECRET' => 'Security',
+        'VORTOS_CACHE_DRIVER' => 'Cache',
+        'VORTOS_MESSAGING_DRIVER' => 'Messaging',
+        'DATABASE_URL' => 'Database',
+        'REDIS_HOST' => 'Redis',
+        'MONGO_HOST' => 'MongoDB',
+        'KAFKA_BROKERS' => 'Kafka',
+    ];
+
     public function __construct(private readonly string $projectDir) {}
 
     /** @return array<string, string> */
@@ -42,6 +53,7 @@ final class EnvironmentFileWriter
         $existing = is_file($path) ? (string) file_get_contents($path) : '';
         $lines = $existing === '' ? [] : preg_split('/\R/', rtrim($existing, "\r\n"));
         $lines = is_array($lines) ? $lines : [];
+        $newFile = $lines === [];
         $index = [];
 
         foreach ($lines as $line => $content) {
@@ -66,6 +78,16 @@ final class EnvironmentFileWriter
                 $lines[$index[$key]] = $entry;
                 $updated[] = $key;
                 continue;
+            }
+
+            if ($newFile && isset(self::SECTION_BEFORE[$key])) {
+                if ($lines !== []) {
+                    $lines[] = '';
+                }
+                $lines[] = '### ' . self::SECTION_BEFORE[$key];
+                if ($key === 'APP_ENV') {
+                    $lines[] = '### Generated locally. Do not commit this file.';
+                }
             }
 
             $lines[] = $entry;
