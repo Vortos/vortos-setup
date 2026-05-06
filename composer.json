@@ -1,0 +1,23 @@
+{
+  "name": "vortos/vortos-setup",
+  "description": "Vortos interactive project setup and environment checks",
+  "type": "library",
+  "license": "MIT",
+  "autoload": {
+    "psr-4": {
+      "Vortos\\Setup\\": ""
+    }
+  },
+  "require": {
+    "php": ">=8.2",
+    "vortos/vortos-foundation": "^1.0",
+    "vortos/vortos-docker": "^1.0",
+    "symfony/console": "^7.3"
+  },
+  "extra": {
+    "vortos": {
+      "package": "Vortos\\Setup\\DependencyInjection\\SetupPackage",
+      "order": 125
+    }
+  }
+}
