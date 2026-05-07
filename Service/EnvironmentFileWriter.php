@@ -9,12 +9,9 @@ final class EnvironmentFileWriter
     private const SECTION_BEFORE = [
         'APP_ENV' => 'Vortos setup',
         'JWT_SECRET' => 'Security',
+        'VORTOS_WRITE_DB_DRIVER' => 'Database',
         'VORTOS_CACHE_DRIVER' => 'Cache',
         'VORTOS_MESSAGING_DRIVER' => 'Messaging',
-        'DATABASE_URL' => 'Database',
-        'REDIS_HOST' => 'Redis',
-        'MONGO_HOST' => 'MongoDB',
-        'KAFKA_BROKERS' => 'Kafka',
     ];
 
     public function __construct(private readonly string $projectDir) {}

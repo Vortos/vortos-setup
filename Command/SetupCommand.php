@@ -408,9 +408,8 @@ final class SetupCommand extends Command
     private function choiceLabel(SetupCapabilityInterface $capability): string
     {
         $packages = $capability->composerPackages();
-        $suffix = $packages === [] ? '' : sprintf(' (%s)', implode(', ', $packages));
 
-        return sprintf('%s - %s%s', $capability->key(), $capability->label(), $suffix);
+        return $capability->label() . ($packages === [] ? '' : sprintf(' (%s)', implode(', ', $packages)));
     }
 
     private function capabilityValue(string $key): string
@@ -460,6 +459,7 @@ final class SetupCommand extends Command
             }
 
             $config = $this->askCustomConfig($input, $output, $io, $config);
+            $io->newLine();
         }
     }
 
@@ -501,8 +501,24 @@ final class SetupCommand extends Command
     {
         $current = $this->envWriter->readKnownValues();
         $projectName = $this->resolvedProjectName($current);
+        if (!$regenerateSecrets) {
+            $postgresDsnPassword = $this->dsnPassword((string) ($current['VORTOS_WRITE_DB_DSN'] ?? ''));
+            if (!isset($current['POSTGRES_PASSWORD']) && $postgresDsnPassword !== null) {
+                $current['POSTGRES_PASSWORD'] = $postgresDsnPassword;
+            }
+
+            $mongoDsnPassword = $this->dsnPassword((string) ($current['VORTOS_READ_DB_DSN'] ?? ''));
+            if (!isset($current['MONGO_INITDB_ROOT_PASSWORD']) && $mongoDsnPassword !== null) {
+                $current['MONGO_INITDB_ROOT_PASSWORD'] = $mongoDsnPassword;
+            }
+        }
         $postgresPassword = $this->secret('POSTGRES_PASSWORD', $current, $regenerateSecrets, 16);
         $mongoPassword = $this->secret('MONGO_INITDB_ROOT_PASSWORD', $current, $regenerateSecrets, 16);
+        $writeDbHost = (bool) $config['docker'] ? 'write_db' : '127.0.0.1';
+        $readDbHost = (bool) $config['docker'] ? 'read_db' : '127.0.0.1';
+        $messagingDsn = $config['messaging'] === 'in-memory'
+            ? 'in-memory://default'
+            : sprintf('kafka://%s', (bool) $config['docker'] ? 'kafka:9092' : '127.0.0.1:9092');
         $values = [
             'APP_ENV' => 'dev',
             'APP_DEBUG' => 'true',
@@ -511,50 +527,40 @@ final class SetupCommand extends Command
             'HEALTH_DETAILS' => 'debug',
             'HEALTH_TOKEN' => $this->secret('HEALTH_TOKEN', $current, $regenerateSecrets, 24),
             'HEALTH_EXPOSE_ERRORS' => 'false',
+            'VORTOS_WRITE_DB_DRIVER' => 'postgres',
+            'VORTOS_WRITE_DB_DSN' => sprintf('pgsql://postgres:%s@%s:5432/%s', $postgresPassword, $writeDbHost, $projectName),
+            'VORTOS_READ_DB_DRIVER' => (bool) $config['mongo'] ? 'mongo' : 'none',
+            'VORTOS_READ_DB_DSN' => (bool) $config['mongo'] ? sprintf('mongodb://root:%s@%s:27017', $mongoPassword, $readDbHost) : '',
+            'VORTOS_READ_DB_NAME' => (bool) $config['mongo'] ? $projectName : '',
             'VORTOS_CACHE_DRIVER' => $config['cache'] === 'in-memory' ? 'in-memory' : 'redis',
+            'VORTOS_CACHE_DSN' => sprintf('redis://%s:6379', (bool) $config['docker'] ? 'redis' : '127.0.0.1'),
             'VORTOS_CACHE_PREFIX' => ($_ENV['APP_ENV'] ?? 'dev') . '_' . $projectName . '_',
             'VORTOS_MESSAGING_DRIVER' => $config['messaging'] === 'in-memory' ? 'in-memory' : 'kafka',
+            'VORTOS_MESSAGING_DSN' => $messagingDsn,
         ];
 
         if ((bool) $config['docker']) {
             return $values + [
-                'DATABASE_URL' => sprintf('pgsql://postgres:%s@write_db:5432/%s', $postgresPassword, $projectName),
-                'POSTGRES_HOST' => 'write_db',
                 'POSTGRES_USER' => 'postgres',
                 'POSTGRES_PASSWORD' => $postgresPassword,
                 'POSTGRES_DB' => $projectName,
-                'POSTGRES_DB_NAME' => $projectName,
-                'REDIS_HOST' => 'redis',
-                'REDIS_PORT' => '6379',
-                'MONGO_HOST' => 'read_db',
-                'MONGO_PORT' => '27017',
                 'MONGO_INITDB_ROOT_USERNAME' => 'root',
                 'MONGO_INITDB_ROOT_PASSWORD' => $mongoPassword,
-                'MONGO_DB_NAME' => $projectName,
-                'KAFKA_BROKERS' => 'kafka:9092',
-                'MESSENGER_TRANSPORT_DSN' => 'kafka://kafka:9092',
-                'MESSENGER_TRANSPORT_ASYNC_PRODUCER_DSN' => 'kafka://kafka:9092',
-                'MESSENGER_TRANSPORT_ASYNC_CONSUMER_DSN' => 'kafka://kafka:9092',
             ];
         }
 
-        return $values + [
-            'DATABASE_URL' => sprintf('pgsql://postgres:%s@127.0.0.1:5432/%s', $postgresPassword, $projectName),
-            'POSTGRES_HOST' => '127.0.0.1',
-            'POSTGRES_USER' => 'postgres',
-            'POSTGRES_PASSWORD' => $postgresPassword,
-            'POSTGRES_DB' => $projectName,
-            'POSTGRES_DB_NAME' => $projectName,
-            'REDIS_HOST' => '127.0.0.1',
-            'REDIS_PORT' => '6379',
-            'MONGO_HOST' => '127.0.0.1',
-            'MONGO_PORT' => '27017',
-            'MONGO_INITDB_ROOT_USERNAME' => 'root',
-            'MONGO_INITDB_ROOT_PASSWORD' => $mongoPassword,
-            'MONGO_DB_NAME' => $projectName,
-            'KAFKA_BROKERS' => '127.0.0.1:9092',
-            'MESSENGER_TRANSPORT_DSN' => 'in-memory://default',
-        ];
+        return $values;
+    }
+
+    private function dsnPassword(string $dsn): ?string
+    {
+        if ($dsn === '') {
+            return null;
+        }
+
+        $password = parse_url($dsn, PHP_URL_PASS);
+
+        return is_string($password) && $password !== '' ? urldecode($password) : null;
     }
 
     /** @param array<string, mixed> $config @return string[] */
@@ -587,8 +593,7 @@ final class SetupCommand extends Command
         $io->writeln('<fg=cyan;options=bold>  \ \ / / | | | | |_) || || | | \___ \ </>');
         $io->writeln('<fg=cyan;options=bold>   \ V /  | |_| |  _ < | || |_| |___) |</>');
         $io->writeln('<fg=cyan;options=bold>    \_/    \___/|_| \_\|_| \___/|____/ </>');
-        $io->writeln('<fg=cyan;options=bold> V O R T O S</>');
-        $io->writeln('<fg=gray>Configure Docker or local development without editing secrets by hand.</>');
+        $io->writeln('<fg=gray>Configure Docker or local development.</>');
         $io->writeln('');
 
         if (!$this->supportsAnimation($input, $output)) {
