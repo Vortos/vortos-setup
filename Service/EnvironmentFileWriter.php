@@ -41,12 +41,37 @@ final class EnvironmentFileWriter
     }
 
     /**
+     * Update named keys in the committed .env file (non-secrets only — this file is version-controlled).
+     *
+     * @param array<string, string> $values
+     * @return array{path: string, written: string[], updated: string[], unchanged: string[], backup: ?string}
+     */
+    public function writeBase(array $values, bool $dryRun = false): array
+    {
+        return $this->updateFile($this->projectDir . DIRECTORY_SEPARATOR . '.env', $values, $dryRun, false, false);
+    }
+
+    /**
      * @param array<string, string> $values
      * @return array{path: string, written: string[], updated: string[], unchanged: string[], backup: ?string}
      */
     public function writeLocal(array $values, bool $dryRun = false, bool $backup = true): array
     {
-        $path = $this->projectDir . DIRECTORY_SEPARATOR . '.env.local';
+        return $this->updateFile(
+            $this->projectDir . DIRECTORY_SEPARATOR . '.env.local',
+            $values,
+            $dryRun,
+            $backup,
+            true,
+        );
+    }
+
+    /**
+     * @param array<string, string> $values
+     * @return array{path: string, written: string[], updated: string[], unchanged: string[], backup: ?string}
+     */
+    private function updateFile(string $path, array $values, bool $dryRun, bool $backup, bool $addHeaders): array
+    {
         $existing = is_file($path) ? (string) file_get_contents($path) : '';
         $lines = $existing === '' ? [] : preg_split('/\R/', rtrim($existing, "\r\n"));
         $lines = is_array($lines) ? $lines : [];
@@ -77,7 +102,7 @@ final class EnvironmentFileWriter
                 continue;
             }
 
-            if ($newFile && isset(self::SECTION_BEFORE[$key])) {
+            if ($addHeaders && $newFile && isset(self::SECTION_BEFORE[$key])) {
                 if ($lines !== []) {
                     $lines[] = '';
                 }
@@ -103,11 +128,11 @@ final class EnvironmentFileWriter
         }
 
         return [
-            'path' => $path,
-            'written' => $written,
-            'updated' => $updated,
+            'path'      => $path,
+            'written'   => $written,
+            'updated'   => $updated,
             'unchanged' => $unchanged,
-            'backup' => $backupPath,
+            'backup'    => $backupPath,
         ];
     }
 

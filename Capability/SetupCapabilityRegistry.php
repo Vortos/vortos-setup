@@ -23,9 +23,27 @@ final class SetupCapabilityRegistry
             new StaticSetupCapability('runtime.frankenphp', 'FrankenPHP Docker', 'runtime', ['vortos/vortos-docker']),
             new StaticSetupCapability('runtime.phpfpm', 'PHP-FPM Docker', 'runtime', ['vortos/vortos-docker']),
             new StaticSetupCapability('runtime.local', 'Local PHP', 'runtime'),
-            new StaticSetupCapability('write_db.postgres', 'PostgreSQL', 'write_db', ['vortos/vortos-persistence-dbal']),
+            new StaticSetupCapability('write_db.postgres', 'PostgreSQL (DBAL)', 'write_db', ['vortos/vortos-persistence-dbal'],
+                dockerEnvFactory: static fn(string $project, string $pwd) => [
+                    'VORTOS_WRITE_DB_USER'     => 'postgres',
+                    'VORTOS_WRITE_DB_PASSWORD' => $pwd,
+                    'VORTOS_WRITE_DB_NAME'     => $project,
+                ],
+            ),
+            new StaticSetupCapability('write_db.postgres_orm', 'PostgreSQL (Doctrine ORM)', 'write_db', ['vortos/vortos-persistence-orm'],
+                dockerEnvFactory: static fn(string $project, string $pwd) => [
+                    'VORTOS_WRITE_DB_USER'     => 'postgres',
+                    'VORTOS_WRITE_DB_PASSWORD' => $pwd,
+                    'VORTOS_WRITE_DB_NAME'     => $project,
+                ],
+            ),
             new StaticSetupCapability('read_db.none', 'None', 'read_db'),
-            new StaticSetupCapability('read_db.mongo', 'MongoDB', 'read_db', ['vortos/vortos-persistence-mongo']),
+            new StaticSetupCapability('read_db.mongo', 'MongoDB', 'read_db', ['vortos/vortos-persistence-mongo'],
+                dockerEnvFactory: static fn(string $project, string $pwd) => [
+                    'VORTOS_READ_DB_USER'     => 'root',
+                    'VORTOS_READ_DB_PASSWORD' => $pwd,
+                ],
+            ),
             new StaticSetupCapability('cache.redis', 'Redis', 'cache', ['vortos/vortos-cache']),
             new StaticSetupCapability('cache.in_memory', 'In-memory cache', 'cache', ['vortos/vortos-cache']),
             new StaticSetupCapability('messaging.kafka', 'Kafka', 'messaging', ['vortos/vortos-messaging']),
@@ -40,6 +58,11 @@ final class SetupCapabilityRegistry
         }
 
         $this->capabilities[$capability->key()] = $capability;
+    }
+
+    public function has(string $key): bool
+    {
+        return isset($this->capabilities[$key]);
     }
 
     public function get(string $key): SetupCapabilityInterface

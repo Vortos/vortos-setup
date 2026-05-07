@@ -16,6 +16,7 @@ use Vortos\Docker\Service\DockerPublishResult;
 use Vortos\Setup\Capability\SetupCapabilityInterface;
 use Vortos\Setup\Capability\SetupCapabilityRegistry;
 use Vortos\Setup\Console\TerminalMenu;
+use Vortos\Setup\Service\ComposerPackageInspector;
 use Vortos\Setup\Service\EnvironmentFileWriter;
 use Vortos\Setup\Service\SetupEnvironmentChecker;
 use Vortos\Setup\Service\SetupStateStore;
@@ -72,6 +73,7 @@ final class SetupCommand extends Command
         private readonly DockerFilePublisher $dockerPublisher,
         private readonly ?TerminalMenu $terminalMenu = null,
         private readonly ?SetupCapabilityRegistry $capabilityRegistry = null,
+        private readonly ?ComposerPackageInspector $packageInspector = null,
     ) {
         parent::__construct();
     }
@@ -130,6 +132,12 @@ final class SetupCommand extends Command
 
         $this->renderChecks($io, $checks);
 
+        $current = $this->envWriter->readKnownValues();
+        $this->envWriter->writeBase(
+            ['APP_NAME' => $this->resolvedProjectName($current)],
+            $dryRun,
+        );
+
         $envResult = $this->envWriter->writeLocal(
             $this->envValues($config, (bool) $input->getOption('regenerate-secrets')),
             $dryRun,
@@ -152,6 +160,8 @@ final class SetupCommand extends Command
 
             $this->renderDockerResult($io, $result, $dryRun);
         }
+
+        $this->installMissingPackages($config, $io, $dryRun);
 
         $stateToWrite = [
             'profile' => $config['profile'] ?? null,
@@ -501,52 +511,59 @@ final class SetupCommand extends Command
     {
         $current = $this->envWriter->readKnownValues();
         $projectName = $this->resolvedProjectName($current);
-        if (!$regenerateSecrets) {
-            $postgresDsnPassword = $this->dsnPassword((string) ($current['VORTOS_WRITE_DB_DSN'] ?? ''));
-            if (!isset($current['POSTGRES_PASSWORD']) && $postgresDsnPassword !== null) {
-                $current['POSTGRES_PASSWORD'] = $postgresDsnPassword;
-            }
 
-            $mongoDsnPassword = $this->dsnPassword((string) ($current['VORTOS_READ_DB_DSN'] ?? ''));
-            if (!isset($current['MONGO_INITDB_ROOT_PASSWORD']) && $mongoDsnPassword !== null) {
-                $current['MONGO_INITDB_ROOT_PASSWORD'] = $mongoDsnPassword;
+        // Migrate passwords from old vendor-specific key names on repeat runs
+        if (!$regenerateSecrets) {
+            if (!isset($current['VORTOS_WRITE_DB_PASSWORD'])) {
+                $current['VORTOS_WRITE_DB_PASSWORD'] =
+                    $current['POSTGRES_PASSWORD']
+                    ?? $this->dsnPassword((string) ($current['VORTOS_WRITE_DB_DSN'] ?? ''))
+                    ?? null;
+            }
+            if (!isset($current['VORTOS_READ_DB_PASSWORD'])) {
+                $current['VORTOS_READ_DB_PASSWORD'] =
+                    $current['MONGO_INITDB_ROOT_PASSWORD']
+                    ?? $this->dsnPassword((string) ($current['VORTOS_READ_DB_DSN'] ?? ''))
+                    ?? null;
             }
         }
-        $postgresPassword = $this->secret('POSTGRES_PASSWORD', $current, $regenerateSecrets, 16);
-        $mongoPassword = $this->secret('MONGO_INITDB_ROOT_PASSWORD', $current, $regenerateSecrets, 16);
-        $writeDbHost = (bool) $config['docker'] ? 'write_db' : '127.0.0.1';
-        $readDbHost = (bool) $config['docker'] ? 'read_db' : '127.0.0.1';
-        $messagingDsn = $config['messaging'] === 'in-memory'
+
+        $writeDbPassword = $this->secret('VORTOS_WRITE_DB_PASSWORD', $current, $regenerateSecrets, 16);
+        $readDbPassword  = $this->secret('VORTOS_READ_DB_PASSWORD', $current, $regenerateSecrets, 16);
+        $writeDbHost     = (bool) $config['docker'] ? 'write_db' : '127.0.0.1';
+        $readDbHost      = (bool) $config['docker'] ? 'read_db' : '127.0.0.1';
+        $messagingDsn    = $config['messaging'] === 'in-memory'
             ? 'in-memory://default'
             : sprintf('kafka://%s', (bool) $config['docker'] ? 'kafka:9092' : '127.0.0.1:9092');
+
         $values = [
-            'APP_ENV' => 'dev',
-            'APP_DEBUG' => 'true',
-            'APP_NAME' => $projectName,
-            'JWT_SECRET' => $this->secret('JWT_SECRET', $current, $regenerateSecrets, 32),
-            'HEALTH_DETAILS' => 'debug',
-            'HEALTH_TOKEN' => $this->secret('HEALTH_TOKEN', $current, $regenerateSecrets, 24),
+            'APP_ENV'              => 'dev',
+            'APP_DEBUG'            => 'true',
+            'JWT_SECRET'           => $this->secret('JWT_SECRET', $current, $regenerateSecrets, 32),
+            'HEALTH_DETAILS'       => 'debug',
+            'HEALTH_TOKEN'         => $this->secret('HEALTH_TOKEN', $current, $regenerateSecrets, 24),
             'HEALTH_EXPOSE_ERRORS' => 'false',
             'VORTOS_WRITE_DB_DRIVER' => 'postgres',
-            'VORTOS_WRITE_DB_DSN' => sprintf('pgsql://postgres:%s@%s:5432/%s', $postgresPassword, $writeDbHost, $projectName),
-            'VORTOS_READ_DB_DRIVER' => (bool) $config['mongo'] ? 'mongo' : 'none',
-            'VORTOS_READ_DB_DSN' => (bool) $config['mongo'] ? sprintf('mongodb://root:%s@%s:27017', $mongoPassword, $readDbHost) : '',
-            'VORTOS_READ_DB_NAME' => (bool) $config['mongo'] ? $projectName : '',
-            'VORTOS_CACHE_DRIVER' => $config['cache'] === 'in-memory' ? 'in-memory' : 'redis',
-            'VORTOS_CACHE_DSN' => sprintf('redis://%s:6379', (bool) $config['docker'] ? 'redis' : '127.0.0.1'),
-            'VORTOS_CACHE_PREFIX' => ($_ENV['APP_ENV'] ?? 'dev') . '_' . $projectName . '_',
+            'VORTOS_WRITE_DB_DSN'    => sprintf('pgsql://postgres:%s@%s:5432/%s', $writeDbPassword, $writeDbHost, $projectName),
+            'VORTOS_READ_DB_DRIVER'  => (bool) $config['mongo'] ? 'mongo' : 'none',
+            'VORTOS_READ_DB_DSN'     => (bool) $config['mongo'] ? sprintf('mongodb://root:%s@%s:27017', $readDbPassword, $readDbHost) : '',
+            'VORTOS_READ_DB_NAME'    => (bool) $config['mongo'] ? $projectName : '',
+            'VORTOS_CACHE_DRIVER'    => $config['cache'] === 'in-memory' ? 'in-memory' : 'redis',
+            'VORTOS_CACHE_DSN'       => sprintf('redis://%s:6379', (bool) $config['docker'] ? 'redis' : '127.0.0.1'),
+            'VORTOS_CACHE_PREFIX'    => ($_ENV['APP_ENV'] ?? 'dev') . '_' . $projectName . '_',
             'VORTOS_MESSAGING_DRIVER' => $config['messaging'] === 'in-memory' ? 'in-memory' : 'kafka',
-            'VORTOS_MESSAGING_DSN' => $messagingDsn,
+            'VORTOS_MESSAGING_DSN'    => $messagingDsn,
         ];
 
         if ((bool) $config['docker']) {
-            return $values + [
-                'POSTGRES_USER' => 'postgres',
-                'POSTGRES_PASSWORD' => $postgresPassword,
-                'POSTGRES_DB' => $projectName,
-                'MONGO_INITDB_ROOT_USERNAME' => 'root',
-                'MONGO_INITDB_ROOT_PASSWORD' => $mongoPassword,
-            ];
+            $registry = $this->capabilities();
+            foreach ($this->selectedCapabilityKeys($config) as $key) {
+                if (!$registry->has($key)) {
+                    continue;
+                }
+                $password = str_starts_with($key, 'write_db.') ? $writeDbPassword : $readDbPassword;
+                $values  += $registry->get($key)->dockerEnv($projectName, $password);
+            }
         }
 
         return $values;
@@ -696,5 +713,61 @@ final class SetupCommand extends Command
         }
 
         return bin2hex(random_bytes($bytes));
+    }
+
+    /** @param array<string, mixed> $config */
+    private function installMissingPackages(array $config, SymfonyStyle $io, bool $dryRun): void
+    {
+        if ($this->packageInspector === null) {
+            return;
+        }
+
+        $registry = $this->capabilities();
+        $keys     = array_filter($this->selectedCapabilityKeys($config), fn(string $k) => $registry->has($k));
+        $missing  = $registry->missingPackagesFor($keys, $this->packageInspector->installedPackages());
+
+        if ($missing === []) {
+            return;
+        }
+
+        $io->section('Installing packages');
+
+        if ($dryRun) {
+            $io->writeln('  <fg=gray>Would run:</> ' . $this->packageInspector->requireCommand($missing));
+            return;
+        }
+
+        $io->writeln('  Running: <info>' . $this->packageInspector->requireCommand($missing) . '</info>');
+        $io->writeln('');
+
+        $success = $this->packageInspector->runRequire($missing);
+
+        $io->writeln('');
+
+        if ($success) {
+            $io->writeln('<info>✔ Packages installed successfully.</info>');
+        } else {
+            $io->warning('composer require failed. Run the command above manually, then re-run vortos:setup.');
+        }
+    }
+
+    /**
+     * Derives the selected capability keys from a resolved config array.
+     * Used to determine which composer packages the chosen stack requires.
+     *
+     * @param array<string, mixed> $config
+     * @return string[]
+     */
+    private function selectedCapabilityKeys(array $config): array
+    {
+        $dbValue = (string) preg_replace('/^(?:docker|local)-/', '', (string) $config['database']);
+
+        return [
+            'runtime.' . str_replace('-', '_', (string) $config['runtime']),
+            'write_db.' . str_replace('-', '_', $dbValue),
+            (bool) $config['mongo'] ? 'read_db.mongo' : 'read_db.none',
+            'cache.' . str_replace('-', '_', (string) $config['cache']),
+            'messaging.' . str_replace('-', '_', (string) $config['messaging']),
+        ];
     }
 }

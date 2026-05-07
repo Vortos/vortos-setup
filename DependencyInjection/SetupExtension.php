@@ -44,9 +44,15 @@ final class SetupExtension extends Extension
         ],
         'vortos.setup_capability.write_db.postgres' => [
             'key' => 'write_db.postgres',
-            'label' => 'PostgreSQL',
+            'label' => 'PostgreSQL (DBAL)',
             'category' => 'write_db',
             'packages' => ['vortos/vortos-persistence-dbal'],
+        ],
+        'vortos.setup_capability.write_db.postgres_orm' => [
+            'key' => 'write_db.postgres_orm',
+            'label' => 'PostgreSQL (Doctrine ORM)',
+            'category' => 'write_db',
+            'packages' => ['vortos/vortos-persistence-orm'],
         ],
         'vortos.setup_capability.read_db.none' => [
             'key' => 'read_db.none',
@@ -129,6 +135,7 @@ final class SetupExtension extends Extension
             ->setArgument('$dockerPublisher', new Reference(DockerFilePublisher::class))
             ->setArgument('$terminalMenu', new Reference(TerminalMenu::class))
             ->setArgument('$capabilityRegistry', new Reference(SetupCapabilityRegistry::class))
+            ->setArgument('$packageInspector', new Reference(ComposerPackageInspector::class))
             ->setPublic(true)
             ->addTag('console.command');
     }

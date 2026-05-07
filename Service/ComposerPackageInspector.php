@@ -58,6 +58,51 @@ final class ComposerPackageInspector
         return 'composer require ' . implode(' ', array_map('escapeshellarg', $packages));
     }
 
+    /**
+     * Runs `composer require` for the given packages, streaming output directly
+     * to the terminal. Returns true on success.
+     *
+     * @param string[] $packages
+     */
+    public function runRequire(array $packages): bool
+    {
+        if ($packages === []) {
+            return true;
+        }
+
+        $args = array_map('escapeshellarg', $packages);
+        $cmd  = implode(' ', [
+            escapeshellarg(PHP_BINARY),
+            escapeshellarg($this->findComposer()),
+            'require',
+            '--no-interaction',
+            ...$args,
+        ]);
+
+        passthru($cmd, $exitCode);
+
+        return $exitCode === 0;
+    }
+
+    private function findComposer(): string
+    {
+        // Composer sets this when running post-install/post-create-project scripts
+        $env = getenv('COMPOSER_BINARY');
+        if ($env !== false && $env !== '' && is_file($env)) {
+            return $env;
+        }
+
+        foreach (['composer.phar', 'composer'] as $name) {
+            $path = $this->projectDir . DIRECTORY_SEPARATOR . $name;
+            if (is_file($path)) {
+                return $path;
+            }
+        }
+
+        // Fall back to composer on $PATH
+        return 'composer';
+    }
+
     /** @return string[] */
     private function composerFiles(): array
     {
