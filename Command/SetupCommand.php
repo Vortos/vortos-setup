@@ -621,7 +621,7 @@ final class SetupCommand extends Command
         }
 
         if ((bool) ($config['mcp'] ?? false)) {
-            $steps[] = 'Wire MCP to your AI client: php bin/vortos vortos:mcp:install';
+            $steps[] = 'Wire MCP to your AI client: php bin/console vortos:mcp:install';
         }
 
         $steps[] = 'Check readiness: curl http://localhost:8000/health/ready';
@@ -814,9 +814,9 @@ final class SetupCommand extends Command
             return;
         }
 
-        $consolePath = $this->projectDir . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'vortos';
+        $consolePath = $this->projectDir . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'console';
         if (!is_file($consolePath)) {
-            $io->warning('Cannot configure MCP automatically because bin/vortos was not found.');
+            $io->warning('Cannot configure MCP automatically because bin/console was not found.');
             return;
         }
 
@@ -827,13 +827,13 @@ final class SetupCommand extends Command
             'vortos:mcp:install',
         ]);
 
-        $io->writeln('  Running: <info>php bin/vortos vortos:mcp:install</info>');
+        $io->writeln('  Running: <info>php bin/console vortos:mcp:install</info>');
         $io->writeln('');
 
         passthru($cmd, $exitCode);
 
         if ($exitCode !== 0) {
-            $io->warning('MCP client setup failed. You can retry with: php bin/vortos vortos:mcp:install');
+            $io->warning('MCP client setup failed. You can retry with: php bin/console vortos:mcp:install');
         }
     }
 
