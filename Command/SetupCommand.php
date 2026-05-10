@@ -172,7 +172,8 @@ final class SetupCommand extends Command
             $this->renderConfigResult($io, $configResult, $dryRun);
         }
 
-        $this->installMissingPackages($config, $io, $dryRun);
+        $packagesReady = $this->installMissingPackages($config, $io, $dryRun);
+        $this->configureMcpClient($config, $io, $input, $dryRun, $packagesReady);
 
         $stateToWrite = [
             'profile' => $config['profile'] ?? null,
@@ -753,10 +754,10 @@ final class SetupCommand extends Command
     }
 
     /** @param array<string, mixed> $config */
-    private function installMissingPackages(array $config, SymfonyStyle $io, bool $dryRun): void
+    private function installMissingPackages(array $config, SymfonyStyle $io, bool $dryRun): bool
     {
         if ($this->packageInspector === null) {
-            return;
+            return true;
         }
 
         $registry = $this->capabilities();
@@ -764,7 +765,7 @@ final class SetupCommand extends Command
         $missing  = $registry->missingPackagesFor($keys, $this->packageInspector->installedPackages());
 
         if ($missing === []) {
-            return;
+            return true;
         }
 
         $io->section('Installing packages');
@@ -773,7 +774,7 @@ final class SetupCommand extends Command
 
         if ($dryRun) {
             $io->writeln('  <fg=gray>Would run:</> ' . $this->packageInspector->requireCommand($missing, $ignorePlatformReqs));
-            return;
+            return true;
         }
 
         $io->writeln('  Running: <info>' . $this->packageInspector->requireCommand($missing, $ignorePlatformReqs) . '</info>');
@@ -787,6 +788,52 @@ final class SetupCommand extends Command
             $io->writeln('<info>✔ Packages installed successfully.</info>');
         } else {
             $io->warning('composer require failed. Run the command above manually, then re-run vortos:setup.');
+        }
+
+        return $success;
+    }
+
+    /** @param array<string, mixed> $config */
+    private function configureMcpClient(
+        array $config,
+        SymfonyStyle $io,
+        InputInterface $input,
+        bool $dryRun,
+        bool $packagesReady,
+    ): void {
+        if (!(bool) ($config['mcp'] ?? false) || $dryRun || !$input->isInteractive()) {
+            return;
+        }
+
+        if (!$packagesReady) {
+            $io->warning('Skipping MCP client setup because MCP packages were not installed successfully.');
+            return;
+        }
+
+        if (!$io->confirm('Configure MCP in an AI client now?', false)) {
+            return;
+        }
+
+        $consolePath = $this->projectDir . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'vortos';
+        if (!is_file($consolePath)) {
+            $io->warning('Cannot configure MCP automatically because bin/vortos was not found.');
+            return;
+        }
+
+        $io->section('MCP client');
+        $cmd = implode(' ', [
+            escapeshellarg(PHP_BINARY),
+            escapeshellarg($consolePath),
+            'vortos:mcp:install',
+        ]);
+
+        $io->writeln('  Running: <info>php bin/vortos vortos:mcp:install</info>');
+        $io->writeln('');
+
+        passthru($cmd, $exitCode);
+
+        if ($exitCode !== 0) {
+            $io->warning('MCP client setup failed. You can retry with: php bin/vortos vortos:mcp:install');
         }
     }
 
