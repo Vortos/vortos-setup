@@ -8,10 +8,11 @@ final class EnvironmentFileWriter
 {
     private const SECTION_BEFORE = [
         'APP_NAME'                => 'App',
-        'JWT_SECRET'              => 'Security',
         'VORTOS_WRITE_DB_DRIVER'  => 'Write Database',
+        'VORTOS_READ_DB_DRIVER'   => 'Read Database',
         'VORTOS_CACHE_DRIVER'     => 'Cache',
         'VORTOS_MESSAGING_DRIVER' => 'Messaging',
+        'JWT_SECRET'              => 'Security',
     ];
 
     public function __construct(private readonly string $projectDir) {}

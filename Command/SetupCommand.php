@@ -563,10 +563,6 @@ final class SetupCommand extends Command
         $values = [
             'APP_ENV'              => 'dev',
             'APP_DEBUG'            => 'true',
-            'JWT_SECRET'           => $this->secret('JWT_SECRET', $current, $regenerateSecrets, 32),
-            'HEALTH_DETAILS'       => 'debug',
-            'HEALTH_TOKEN'         => $this->secret('HEALTH_TOKEN', $current, $regenerateSecrets, 24),
-            'HEALTH_EXPOSE_ERRORS' => 'false',
             'VORTOS_WRITE_DB_DRIVER' => 'postgres',
             'VORTOS_WRITE_DB_DSN'    => sprintf('pgsql://postgres:%s@%s:5432/%s', $writeDbPassword, $writeDbHost, $projectName),
             'VORTOS_READ_DB_DRIVER'  => (bool) $config['mongo'] ? 'mongo' : 'none',
@@ -577,13 +573,54 @@ final class SetupCommand extends Command
             'VORTOS_CACHE_PREFIX'    => ($_ENV['APP_ENV'] ?? 'dev') . '_' . $projectName . '_',
             'VORTOS_MESSAGING_DRIVER' => $config['messaging'] === 'in-memory' ? 'in-memory' : 'kafka',
             'VORTOS_MESSAGING_DSN'    => $messagingDsn,
+            'JWT_SECRET'           => $this->secret('JWT_SECRET', $current, $regenerateSecrets, 32),
+            'HEALTH_DETAILS'       => 'debug',
+            'HEALTH_TOKEN'         => $this->secret('HEALTH_TOKEN', $current, $regenerateSecrets, 24),
+            'HEALTH_EXPOSE_ERRORS' => 'false',
         ];
 
         if ((bool) $config['docker']) {
-            $values = $this->dockerEnvValues($config, $projectName, $writeDbPassword, $readDbPassword) + $values;
+            $values = $this->mergeDockerEnvValues(
+                $values,
+                $this->dockerEnvValues($config, $projectName, $writeDbPassword, $readDbPassword),
+            );
         }
 
         return $values;
+    }
+
+    /**
+     * @param array<string, string> $values
+     * @param array<string, string> $dockerValues
+     * @return array<string, string>
+     */
+    private function mergeDockerEnvValues(array $values, array $dockerValues): array
+    {
+        $ordered = [];
+
+        foreach ($values as $key => $value) {
+            $ordered[$key] = $value;
+
+            if ($key === 'VORTOS_WRITE_DB_DRIVER') {
+                foreach (['VORTOS_WRITE_DB_USER', 'VORTOS_WRITE_DB_PASSWORD', 'VORTOS_WRITE_DB_NAME'] as $dockerKey) {
+                    if (isset($dockerValues[$dockerKey])) {
+                        $ordered[$dockerKey] = $dockerValues[$dockerKey];
+                        unset($dockerValues[$dockerKey]);
+                    }
+                }
+            }
+
+            if ($key === 'VORTOS_READ_DB_DRIVER') {
+                foreach (['VORTOS_READ_DB_USER', 'VORTOS_READ_DB_PASSWORD'] as $dockerKey) {
+                    if (isset($dockerValues[$dockerKey])) {
+                        $ordered[$dockerKey] = $dockerValues[$dockerKey];
+                        unset($dockerValues[$dockerKey]);
+                    }
+                }
+            }
+        }
+
+        return $ordered + $dockerValues;
     }
 
     /**
