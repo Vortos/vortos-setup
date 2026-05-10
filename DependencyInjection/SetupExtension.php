@@ -23,7 +23,7 @@ final class SetupExtension extends Extension
 {
     private const CAPABILITY_TAG = 'vortos.setup_capability';
 
-    /** @var array<string, array{key: string, label: string, category: string, packages: string[]}> */
+    /** @var array<string, array{key: string, label: string, category: string, packages: string[], docker_env?: array<string, string>}> */
     private const BUILT_IN_CAPABILITIES = [
         'vortos.setup_capability.runtime.frankenphp' => [
             'key' => 'runtime.frankenphp',
@@ -48,12 +48,22 @@ final class SetupExtension extends Extension
             'label' => 'PostgreSQL (DBAL)',
             'category' => 'write_db',
             'packages' => ['vortos/vortos-persistence-dbal'],
+            'docker_env' => [
+                'VORTOS_WRITE_DB_USER' => 'postgres',
+                'VORTOS_WRITE_DB_PASSWORD' => '{password}',
+                'VORTOS_WRITE_DB_NAME' => '{project}',
+            ],
         ],
         'vortos.setup_capability.write_db.postgres_orm' => [
             'key' => 'write_db.postgres_orm',
             'label' => 'PostgreSQL (Doctrine ORM)',
             'category' => 'write_db',
             'packages' => ['vortos/vortos-persistence-orm'],
+            'docker_env' => [
+                'VORTOS_WRITE_DB_USER' => 'postgres',
+                'VORTOS_WRITE_DB_PASSWORD' => '{password}',
+                'VORTOS_WRITE_DB_NAME' => '{project}',
+            ],
         ],
         'vortos.setup_capability.read_db.none' => [
             'key' => 'read_db.none',
@@ -66,6 +76,10 @@ final class SetupExtension extends Extension
             'label' => 'MongoDB',
             'category' => 'read_db',
             'packages' => ['vortos/vortos-persistence-mongo'],
+            'docker_env' => [
+                'VORTOS_READ_DB_USER' => 'root',
+                'VORTOS_READ_DB_PASSWORD' => '{password}',
+            ],
         ],
         'vortos.setup_capability.cache.redis' => [
             'key' => 'cache.redis',
@@ -162,6 +176,7 @@ final class SetupExtension extends Extension
                 ->setArgument('$label', $capability['label'])
                 ->setArgument('$category', $capability['category'])
                 ->setArgument('$composerPackages', $capability['packages'])
+                ->setArgument('$dockerEnvTemplate', $capability['docker_env'] ?? [])
                 ->addTag(self::CAPABILITY_TAG)
                 ->setPublic(false);
         }

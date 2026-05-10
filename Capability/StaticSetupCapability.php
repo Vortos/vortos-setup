@@ -9,6 +9,7 @@ final class StaticSetupCapability implements SetupCapabilityInterface
     /**
      * @param string[] $composerPackages
      * @param \Closure(string, string): array<string, string>|null $dockerEnvFactory
+     * @param array<string, string> $dockerEnvTemplate
      */
     public function __construct(
         private readonly string $key,
@@ -17,6 +18,7 @@ final class StaticSetupCapability implements SetupCapabilityInterface
         private readonly array $composerPackages = [],
         private readonly bool $available = true,
         private readonly ?\Closure $dockerEnvFactory = null,
+        private readonly array $dockerEnvTemplate = [],
     ) {}
 
     public function key(): string
@@ -46,6 +48,18 @@ final class StaticSetupCapability implements SetupCapabilityInterface
 
     public function dockerEnv(string $projectName, string $password): array
     {
-        return $this->dockerEnvFactory !== null ? ($this->dockerEnvFactory)($projectName, $password) : [];
+        if ($this->dockerEnvFactory !== null) {
+            return ($this->dockerEnvFactory)($projectName, $password);
+        }
+
+        $values = [];
+        foreach ($this->dockerEnvTemplate as $key => $value) {
+            $values[$key] = strtr($value, [
+                '{project}' => $projectName,
+                '{password}' => $password,
+            ]);
+        }
+
+        return $values;
     }
 }

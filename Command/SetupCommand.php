@@ -158,6 +158,7 @@ final class SetupCommand extends Command
                     $dryRun,
                     !(bool) $input->getOption('no-docker-backup'),
                     !(bool) $input->getOption('no-docker-overwrite'),
+                    $this->dockerPublishOptions($config),
                 );
             } catch (\InvalidArgumentException $e) {
                 $io->error($e->getMessage());
@@ -173,7 +174,7 @@ final class SetupCommand extends Command
         }
 
         $packagesReady = $this->installMissingPackages($config, $io, $dryRun);
-        $this->configureMcpClient($config, $io, $input, $dryRun, $packagesReady);
+        $mcpClientConfigured = $this->configureMcpClient($config, $io, $input, $dryRun, $packagesReady);
 
         $stateToWrite = [
             'profile' => $config['profile'] ?? null,
@@ -189,7 +190,7 @@ final class SetupCommand extends Command
         $this->stateStore->write($stateToWrite, $dryRun);
 
         $io->section('Next steps');
-        $io->listing($this->nextSteps($config, $input));
+        $io->listing($this->nextSteps($config, $input, $mcpClientConfigured));
 
         $io->success($dryRun ? 'Setup dry run complete.' : 'Vortos setup complete.');
 
@@ -579,17 +580,47 @@ final class SetupCommand extends Command
         ];
 
         if ((bool) $config['docker']) {
-            $registry = $this->capabilities();
-            foreach ($this->selectedCapabilityKeys($config) as $key) {
-                if (!$registry->has($key)) {
-                    continue;
-                }
-                $password = str_starts_with($key, 'write_db.') ? $writeDbPassword : $readDbPassword;
-                $values  += $registry->get($key)->dockerEnv($projectName, $password);
-            }
+            $values = $this->dockerEnvValues($config, $projectName, $writeDbPassword, $readDbPassword) + $values;
         }
 
         return $values;
+    }
+
+    /**
+     * @param array<string, mixed> $config
+     * @return array<string, string>
+     */
+    private function dockerEnvValues(array $config, string $projectName, string $writeDbPassword, string $readDbPassword): array
+    {
+        $values = [];
+        $registry = $this->capabilities();
+
+        foreach ($this->selectedCapabilityKeys($config) as $key) {
+            if (!$registry->has($key)) {
+                continue;
+            }
+
+            $password = str_starts_with($key, 'write_db.') ? $writeDbPassword : $readDbPassword;
+            $values += $registry->get($key)->dockerEnv($projectName, $password);
+        }
+
+        return $values;
+    }
+
+    /**
+     * @param array<string, mixed> $config
+     * @return array{services: array<string, bool>}
+     */
+    private function dockerPublishOptions(array $config): array
+    {
+        return [
+            'services' => [
+                'read_db' => (bool) $config['mongo'],
+                'redis' => $config['cache'] === 'redis',
+                'kafka' => $config['messaging'] === 'kafka',
+                'worker' => $config['messaging'] === 'kafka',
+            ],
+        ];
     }
 
     private function dsnPassword(string $dsn): ?string
@@ -604,7 +635,7 @@ final class SetupCommand extends Command
     }
 
     /** @param array<string, mixed> $config @return string[] */
-    private function nextSteps(array $config, InputInterface $input): array
+    private function nextSteps(array $config, InputInterface $input, bool $mcpClientConfigured = false): array
     {
         $steps = [];
 
@@ -620,7 +651,7 @@ final class SetupCommand extends Command
             $steps[] = 'Apply migrations: php vortos migrate';
         }
 
-        if ((bool) ($config['mcp'] ?? false)) {
+        if ((bool) ($config['mcp'] ?? false) && !$mcpClientConfigured) {
             $steps[] = 'Wire MCP to your AI client: php bin/console vortos:mcp:install';
         }
 
@@ -800,24 +831,24 @@ final class SetupCommand extends Command
         InputInterface $input,
         bool $dryRun,
         bool $packagesReady,
-    ): void {
+    ): bool {
         if (!(bool) ($config['mcp'] ?? false) || $dryRun || !$input->isInteractive()) {
-            return;
+            return false;
         }
 
         if (!$packagesReady) {
             $io->warning('Skipping MCP client setup because MCP packages were not installed successfully.');
-            return;
+            return false;
         }
 
         if (!$io->confirm('Configure MCP in an AI client now?', false)) {
-            return;
+            return false;
         }
 
         $consolePath = $this->projectDir . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'console';
         if (!is_file($consolePath)) {
             $io->warning('Cannot configure MCP automatically because bin/console was not found.');
-            return;
+            return false;
         }
 
         $io->section('MCP client');
@@ -834,7 +865,10 @@ final class SetupCommand extends Command
 
         if ($exitCode !== 0) {
             $io->warning('MCP client setup failed. You can retry with: php bin/console vortos:mcp:install');
+            return false;
         }
+
+        return true;
     }
 
     /**
