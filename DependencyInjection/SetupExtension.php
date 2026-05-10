@@ -91,6 +91,18 @@ final class SetupExtension extends Extension
             'category' => 'messaging',
             'packages' => ['vortos/vortos-messaging'],
         ],
+        'vortos.setup_capability.mcp.enabled' => [
+            'key' => 'mcp.enabled',
+            'label' => 'Install Vortos MCP server',
+            'category' => 'mcp',
+            'packages' => ['vortos/vortos-mcp'],
+        ],
+        'vortos.setup_capability.mcp.disabled' => [
+            'key' => 'mcp.disabled',
+            'label' => 'Skip Vortos MCP server',
+            'category' => 'mcp',
+            'packages' => [],
+        ],
     ];
 
     public function getAlias(): string

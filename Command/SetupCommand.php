@@ -34,6 +34,7 @@ final class SetupCommand extends Command
             'cache' => 'redis',
             'messaging' => 'kafka',
             'mongo' => true,
+            'mcp' => true,
         ],
         'docker-phpfpm' => [
             'runtime' => 'phpfpm',
@@ -42,6 +43,7 @@ final class SetupCommand extends Command
             'cache' => 'redis',
             'messaging' => 'kafka',
             'mongo' => true,
+            'mcp' => true,
         ],
         'local' => [
             'runtime' => 'local',
@@ -50,6 +52,7 @@ final class SetupCommand extends Command
             'cache' => 'in-memory',
             'messaging' => 'in-memory',
             'mongo' => false,
+            'mcp' => true,
         ],
         'minimal' => [
             'runtime' => 'local',
@@ -58,6 +61,7 @@ final class SetupCommand extends Command
             'cache' => 'in-memory',
             'messaging' => 'in-memory',
             'mongo' => false,
+            'mcp' => false,
         ],
     ];
 
@@ -87,6 +91,7 @@ final class SetupCommand extends Command
             ->addOption('profile', null, InputOption::VALUE_REQUIRED, 'Profile: minimal, docker, custom')
             ->addOption('preset', null, InputOption::VALUE_REQUIRED, 'Preset: docker-frankenphp, docker-phpfpm, local, minimal')
             ->addOption('dry-run', null, InputOption::VALUE_NONE, 'Show planned changes without writing files')
+            ->addOption('mcp', null, InputOption::VALUE_NEGATABLE, 'Install the optional Vortos MCP server package')
             ->addOption('force', null, InputOption::VALUE_NONE, 'Allow setup to update previous generated values without extra prompts')
             ->addOption('regenerate-secrets', null, InputOption::VALUE_NONE, 'Generate new local secrets and service passwords')
             ->addOption('skip-docker-publish', null, InputOption::VALUE_NONE, 'Do not publish Docker files even when a Docker preset is selected')
@@ -109,6 +114,9 @@ final class SetupCommand extends Command
         } catch (\InvalidArgumentException $e) {
             $io->error($e->getMessage());
             return Command::FAILURE;
+        }
+        if ($input->getOption('mcp') !== null) {
+            $config['mcp'] = (bool) $input->getOption('mcp');
         }
 
         if ($state !== []) {
@@ -175,6 +183,7 @@ final class SetupCommand extends Command
             'cache' => $config['cache'],
             'messaging' => $config['messaging'],
             'mongo' => $config['mongo'],
+            'mcp' => $config['mcp'],
         ];
         $this->stateStore->write($stateToWrite, $dryRun);
 
@@ -339,6 +348,14 @@ final class SetupCommand extends Command
             'Choose messaging',
             'messaging.' . str_replace('-', '_', (string) $config['messaging']),
         ));
+        $mcp = $this->capabilityValue($this->askCapability(
+            $input,
+            $output,
+            $io,
+            'mcp',
+            'Install MCP server',
+            (bool) ($config['mcp'] ?? true) ? 'mcp.enabled' : 'mcp.disabled',
+        ));
 
         return [
             'preset' => $this->presetForRuntime($runtime),
@@ -349,6 +366,7 @@ final class SetupCommand extends Command
             'cache' => $cache,
             'messaging' => $messaging,
             'mongo' => $readDatabase === 'mongo',
+            'mcp' => $mcp === 'enabled',
         ];
     }
 
@@ -489,6 +507,7 @@ final class SetupCommand extends Command
         $io->writeln(sprintf('  Read DB:   %s', (bool) $config['mongo'] ? 'mongo' : 'none'));
         $io->writeln(sprintf('  Cache:     %s', (string) $config['cache']));
         $io->writeln(sprintf('  Messaging: %s', (string) $config['messaging']));
+        $io->writeln(sprintf('  MCP:       %s', (bool) ($config['mcp'] ?? false) ? 'yes' : 'no'));
         $io->writeln(sprintf('  Docker:    %s', (bool) $config['docker'] ? 'yes' : 'no'));
     }
 
@@ -598,6 +617,10 @@ final class SetupCommand extends Command
 
         if ((bool) $input->getOption('publish-migrations') || (bool) $input->getOption('run-migrations')) {
             $steps[] = 'Apply migrations: php vortos migrate';
+        }
+
+        if ((bool) ($config['mcp'] ?? false)) {
+            $steps[] = 'Wire MCP to your AI client: php bin/vortos vortos:mcp:install';
         }
 
         $steps[] = 'Check readiness: curl http://localhost:8000/health/ready';
@@ -746,15 +769,17 @@ final class SetupCommand extends Command
 
         $io->section('Installing packages');
 
+        $ignorePlatformReqs = $this->composerPlatformReqsProvidedByDocker($config);
+
         if ($dryRun) {
-            $io->writeln('  <fg=gray>Would run:</> ' . $this->packageInspector->requireCommand($missing));
+            $io->writeln('  <fg=gray>Would run:</> ' . $this->packageInspector->requireCommand($missing, $ignorePlatformReqs));
             return;
         }
 
-        $io->writeln('  Running: <info>' . $this->packageInspector->requireCommand($missing) . '</info>');
+        $io->writeln('  Running: <info>' . $this->packageInspector->requireCommand($missing, $ignorePlatformReqs) . '</info>');
         $io->writeln('');
 
-        $success = $this->packageInspector->runRequire($missing);
+        $success = $this->packageInspector->runRequire($missing, $ignorePlatformReqs);
 
         $io->writeln('');
 
@@ -782,6 +807,34 @@ final class SetupCommand extends Command
             (bool) $config['mongo'] ? 'read_db.mongo' : 'read_db.none',
             'cache.' . str_replace('-', '_', (string) $config['cache']),
             'messaging.' . str_replace('-', '_', (string) $config['messaging']),
+            (bool) ($config['mcp'] ?? false) ? 'mcp.enabled' : 'mcp.disabled',
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $config
+     * @return string[]
+     */
+    private function composerPlatformReqsProvidedByDocker(array $config): array
+    {
+        if (!(bool) $config['docker']) {
+            return [];
+        }
+
+        $requirements = [];
+
+        if ((bool) $config['mongo']) {
+            $requirements[] = 'ext-mongodb';
+        }
+
+        if ($config['cache'] === 'redis') {
+            $requirements[] = 'ext-redis';
+        }
+
+        if ($config['messaging'] === 'kafka') {
+            $requirements[] = 'ext-rdkafka';
+        }
+
+        return $requirements;
     }
 }

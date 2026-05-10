@@ -52,10 +52,20 @@ final class ComposerPackageInspector
         return array_values($packages);
     }
 
-    /** @param string[] $packages */
-    public function requireCommand(array $packages): string
+    /**
+     * @param string[] $packages
+     * @param string[] $ignorePlatformReqs
+     */
+    public function requireCommand(array $packages, array $ignorePlatformReqs = []): string
     {
-        return 'composer require ' . implode(' ', array_map('escapeshellarg', $packages));
+        return 'composer require '
+            . implode(' ', [
+                ...array_map(
+                    static fn(string $requirement): string => '--ignore-platform-req=' . escapeshellarg($requirement),
+                    $ignorePlatformReqs,
+                ),
+                ...array_map('escapeshellarg', $packages),
+            ]);
     }
 
     /**
@@ -63,19 +73,25 @@ final class ComposerPackageInspector
      * to the terminal. Returns true on success.
      *
      * @param string[] $packages
+     * @param string[] $ignorePlatformReqs
      */
-    public function runRequire(array $packages): bool
+    public function runRequire(array $packages, array $ignorePlatformReqs = []): bool
     {
         if ($packages === []) {
             return true;
         }
 
         $args = array_map('escapeshellarg', $packages);
+        $ignoreArgs = array_map(
+            static fn(string $requirement): string => '--ignore-platform-req=' . escapeshellarg($requirement),
+            $ignorePlatformReqs,
+        );
         $cmd  = implode(' ', [
             escapeshellarg(PHP_BINARY),
             escapeshellarg($this->findComposer()),
             'require',
             '--no-interaction',
+            ...$ignoreArgs,
             ...$args,
         ]);
 
