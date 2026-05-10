@@ -32,7 +32,7 @@ final class SetupStateStore
         }
 
         $state['updated_at'] = (new \DateTimeImmutable())->format(\DateTimeInterface::ATOM);
-        file_put_contents($this->path(), json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL);
+        file_put_contents($this->path(), json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
     }
 
     public function path(): string

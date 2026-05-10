@@ -8,6 +8,7 @@ use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Argument\TaggedIteratorArgument;
 use Symfony\Component\DependencyInjection\Extension\Extension;
 use Symfony\Component\DependencyInjection\Reference;
+use Vortos\Config\Service\ConfigFilePublisher;
 use Vortos\Docker\Service\DockerFilePublisher;
 use Vortos\Setup\Capability\SetupCapabilityRegistry;
 use Vortos\Setup\Capability\StaticSetupCapability;
@@ -133,6 +134,7 @@ final class SetupExtension extends Extension
             ->setArgument('$envWriter', new Reference(EnvironmentFileWriter::class))
             ->setArgument('$checker', new Reference(SetupEnvironmentChecker::class))
             ->setArgument('$dockerPublisher', new Reference(DockerFilePublisher::class))
+            ->setArgument('$configPublisher', new Reference(ConfigFilePublisher::class))
             ->setArgument('$terminalMenu', new Reference(TerminalMenu::class))
             ->setArgument('$capabilityRegistry', new Reference(SetupCapabilityRegistry::class))
             ->setArgument('$packageInspector', new Reference(ComposerPackageInspector::class))

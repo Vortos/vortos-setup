@@ -11,6 +11,7 @@ use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Question\ChoiceQuestion;
 use Symfony\Component\Console\Style\SymfonyStyle;
+use Vortos\Config\Service\ConfigFilePublisher;
 use Vortos\Docker\Service\DockerFilePublisher;
 use Vortos\Docker\Service\DockerPublishResult;
 use Vortos\Setup\Capability\SetupCapabilityInterface;
@@ -71,6 +72,7 @@ final class SetupCommand extends Command
         private readonly EnvironmentFileWriter $envWriter,
         private readonly SetupEnvironmentChecker $checker,
         private readonly DockerFilePublisher $dockerPublisher,
+        private readonly ?ConfigFilePublisher $configPublisher = null,
         private readonly ?TerminalMenu $terminalMenu = null,
         private readonly ?SetupCapabilityRegistry $capabilityRegistry = null,
         private readonly ?ComposerPackageInspector $packageInspector = null,
@@ -133,13 +135,9 @@ final class SetupCommand extends Command
         $this->renderChecks($io, $checks);
 
         $current = $this->envWriter->readKnownValues();
-        $this->envWriter->writeBase(
-            ['APP_NAME' => $this->resolvedProjectName($current)],
-            $dryRun,
-        );
-
-        $envResult = $this->envWriter->writeLocal(
-            $this->envValues($config, (bool) $input->getOption('regenerate-secrets')),
+        $envResult = $this->envWriter->write(
+            ['APP_NAME' => $this->resolvedProjectName($current)]
+            + $this->envValues($config, (bool) $input->getOption('regenerate-secrets')),
             $dryRun,
         );
         $this->renderEnvironmentResult($io, $envResult, $dryRun);
@@ -159,6 +157,11 @@ final class SetupCommand extends Command
             }
 
             $this->renderDockerResult($io, $result, $dryRun);
+        }
+
+        if ($this->configPublisher !== null) {
+            $configResult = $this->configPublisher->publish($this->projectDir, dryRun: $dryRun);
+            $this->renderConfigResult($io, $configResult, $dryRun);
         }
 
         $this->installMissingPackages($config, $io, $dryRun);
@@ -664,7 +667,7 @@ final class SetupCommand extends Command
             $io->writeln(sprintf('  Backup: <comment>%s</comment>', $this->relative($result['backup'])));
         }
 
-        $io->writeln('  <fg=gray>Commit .env and .env.example. Do not commit .env.local or .vortos-setup.json.</>');
+        $io->writeln('  <fg=gray>.env is gitignored. Commit .env.example as a template. Do not commit .env or .vortos-setup.json.</>');
     }
 
     private function renderDockerResult(SymfonyStyle $io, DockerPublishResult $result, bool $dryRun): void
@@ -673,6 +676,17 @@ final class SetupCommand extends Command
         $io->writeln(sprintf('  Copied: %d', count($result->copied)));
         $io->writeln(sprintf('  Skipped: %d', count($result->skipped)));
         $io->writeln(sprintf('  Backups: %d', count($result->backedUp)));
+    }
+
+    private function renderConfigResult(SymfonyStyle $io, \Vortos\Config\Service\ConfigPublishResult $result, bool $dryRun): void
+    {
+        $io->section($dryRun ? 'Config plan' : 'Config files');
+        $io->writeln(sprintf('  Published: %d', count($result->published)));
+        $io->writeln(sprintf('  Skipped (already exist): %d', count($result->skipped)));
+
+        if ($result->published !== []) {
+            $io->writeln('  <fg=gray>Edit these files to tune module behaviour before deploying.</>');
+        }
     }
 
     private function relative(string $path): string
