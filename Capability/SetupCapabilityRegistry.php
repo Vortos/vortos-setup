@@ -48,6 +48,13 @@ final class SetupCapabilityRegistry
             new StaticSetupCapability('cache.in_memory', 'In-memory cache', 'cache', ['vortos/vortos-cache']),
             new StaticSetupCapability('messaging.kafka', 'Kafka', 'messaging', ['vortos/vortos-messaging']),
             new StaticSetupCapability('messaging.in_memory', 'In-memory messaging', 'messaging', ['vortos/vortos-messaging']),
+            new StaticSetupCapability('observability.normal', 'Built-in metrics and tracing', 'observability'),
+            new StaticSetupCapability('observability.otlp', 'Send metrics and traces to monitoring tools', 'observability', [
+                'open-telemetry/api',
+                'open-telemetry/sdk',
+                'open-telemetry/exporter-otlp',
+                'guzzlehttp/guzzle',
+            ]),
             new StaticSetupCapability('mcp.enabled', 'Install Vortos MCP server', 'mcp', ['vortos/vortos-mcp']),
             new StaticSetupCapability('mcp.disabled', 'Skip Vortos MCP server', 'mcp'),
         ]);

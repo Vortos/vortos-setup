@@ -34,6 +34,7 @@ final class SetupCommand extends Command
             'cache' => 'redis',
             'messaging' => 'kafka',
             'mongo' => true,
+            'observability' => 'normal',
             'mcp' => true,
         ],
         'docker-phpfpm' => [
@@ -43,6 +44,7 @@ final class SetupCommand extends Command
             'cache' => 'redis',
             'messaging' => 'kafka',
             'mongo' => true,
+            'observability' => 'normal',
             'mcp' => true,
         ],
         'local' => [
@@ -52,6 +54,7 @@ final class SetupCommand extends Command
             'cache' => 'in-memory',
             'messaging' => 'in-memory',
             'mongo' => false,
+            'observability' => 'normal',
             'mcp' => true,
         ],
         'minimal' => [
@@ -61,6 +64,7 @@ final class SetupCommand extends Command
             'cache' => 'in-memory',
             'messaging' => 'in-memory',
             'mongo' => false,
+            'observability' => 'normal',
             'mcp' => false,
         ],
     ];
@@ -92,6 +96,7 @@ final class SetupCommand extends Command
             ->addOption('preset', null, InputOption::VALUE_REQUIRED, 'Preset: docker-frankenphp, docker-phpfpm, local, minimal')
             ->addOption('dry-run', null, InputOption::VALUE_NONE, 'Show planned changes without writing files')
             ->addOption('mcp', null, InputOption::VALUE_NEGATABLE, 'Install the optional Vortos MCP server package')
+            ->addOption('otlp', null, InputOption::VALUE_NEGATABLE, 'Install packages for sending metrics and traces to monitoring tools')
             ->addOption('force', null, InputOption::VALUE_NONE, 'Allow setup to update previous generated values without extra prompts')
             ->addOption('regenerate-secrets', null, InputOption::VALUE_NONE, 'Generate new local secrets and service passwords')
             ->addOption('skip-docker-publish', null, InputOption::VALUE_NONE, 'Do not publish Docker files even when a Docker preset is selected')
@@ -117,6 +122,9 @@ final class SetupCommand extends Command
         }
         if ($input->getOption('mcp') !== null) {
             $config['mcp'] = (bool) $input->getOption('mcp');
+        }
+        if ($input->getOption('otlp') !== null) {
+            $config['observability'] = (bool) $input->getOption('otlp') ? 'otlp' : 'normal';
         }
 
         if ($state !== []) {
@@ -185,6 +193,7 @@ final class SetupCommand extends Command
             'cache' => $config['cache'],
             'messaging' => $config['messaging'],
             'mongo' => $config['mongo'],
+            'observability' => $config['observability'] ?? 'normal',
             'mcp' => $config['mcp'],
         ];
         $this->stateStore->write($stateToWrite, $dryRun);
@@ -259,7 +268,11 @@ final class SetupCommand extends Command
         );
 
         if ($selected === null) {
-            $question = new ChoiceQuestion('Choose setup profile', $choices, $defaultProfile);
+            $question = new ChoiceQuestion(
+                $this->choiceQuestionLabel('Choose setup profile'),
+                $choices,
+                $this->choiceQuestionDefault($defaultProfile),
+            );
             $question->setErrorMessage('Profile %s is not valid.');
 
             /** @var string $selected */
@@ -291,7 +304,11 @@ final class SetupCommand extends Command
             return ['preset' => $selected, 'profile' => 'custom'] + self::PRESETS[$selected];
         }
 
-        $question = new ChoiceQuestion('Choose your development setup', array_keys(self::PRESETS), $defaultPreset);
+        $question = new ChoiceQuestion(
+            $this->choiceQuestionLabel('Choose your development setup'),
+            array_keys(self::PRESETS),
+            $this->choiceQuestionDefault($defaultPreset),
+        );
         $question->setErrorMessage('Preset %s is not valid.');
 
         /** @var string $selected */
@@ -350,6 +367,14 @@ final class SetupCommand extends Command
             'Choose messaging',
             'messaging.' . str_replace('-', '_', (string) $config['messaging']),
         ));
+        $observability = $this->capabilityValue($this->askCapability(
+            $input,
+            $output,
+            $io,
+            'observability',
+            'Choose monitoring',
+            'observability.' . str_replace('-', '_', (string) ($config['observability'] ?? 'normal')),
+        ));
         $mcp = $this->capabilityValue($this->askCapability(
             $input,
             $output,
@@ -368,6 +393,7 @@ final class SetupCommand extends Command
             'cache' => $cache,
             'messaging' => $messaging,
             'mongo' => $readDatabase === 'mongo',
+            'observability' => $observability,
             'mcp' => $mcp === 'enabled',
         ];
     }
@@ -421,13 +447,13 @@ final class SetupCommand extends Command
 
         if ($selected === null) {
             $question = new ChoiceQuestion(
-                $label,
+                $this->choiceQuestionLabel($label),
                 array_map(
                     static fn(string $key, string $description): string => sprintf('%s - %s', $key, $description),
                     $keys,
                     array_values($choices),
                 ),
-                array_search($default, $keys, true) ?: 0,
+                $this->choiceQuestionDefault(array_search($default, $keys, true) ?: 0),
             );
             $question->setErrorMessage('Option %s is not valid.');
 
@@ -443,6 +469,27 @@ final class SetupCommand extends Command
         $packages = $capability->composerPackages();
 
         return $capability->label() . ($packages === [] ? '' : sprintf(' (%s)', implode(', ', $packages)));
+    }
+
+    private function observabilityPlanLabel(string $value): string
+    {
+        return $value === 'otlp'
+            ? 'send to monitoring tools'
+            : 'built-in';
+    }
+
+    private function choiceQuestionLabel(string $label): string
+    {
+        if (PHP_OS_FAMILY !== 'Windows') {
+            return $label;
+        }
+
+        return $label . ' (type a number/name and press Enter)';
+    }
+
+    private function choiceQuestionDefault(string|int $default): string|int|null
+    {
+        return PHP_OS_FAMILY === 'Windows' ? null : $default;
     }
 
     private function capabilityValue(string $key): string
@@ -477,7 +524,11 @@ final class SetupCommand extends Command
         while (true) {
             $this->renderPlan($io, $config, $dryRun);
 
-            $question = new ChoiceQuestion('Review setup', ['Continue', 'Customize', 'Cancel'], 'Continue');
+            $question = new ChoiceQuestion(
+                $this->choiceQuestionLabel('Review setup'),
+                ['Continue', 'Customize', 'Cancel'],
+                $this->choiceQuestionDefault('Continue'),
+            );
             $question->setErrorMessage('Action %s is not valid.');
 
             /** @var string $action */
@@ -509,6 +560,7 @@ final class SetupCommand extends Command
         $io->writeln(sprintf('  Read DB:   %s', (bool) $config['mongo'] ? 'mongo' : 'none'));
         $io->writeln(sprintf('  Cache:     %s', (string) $config['cache']));
         $io->writeln(sprintf('  Messaging: %s', (string) $config['messaging']));
+        $io->writeln(sprintf('  Monitoring: %s', $this->observabilityPlanLabel((string) ($config['observability'] ?? 'normal'))));
         $io->writeln(sprintf('  MCP:       %s', (bool) ($config['mcp'] ?? false) ? 'yes' : 'no'));
         $io->writeln(sprintf('  Docker:    %s', (bool) $config['docker'] ? 'yes' : 'no'));
     }
@@ -692,6 +744,10 @@ final class SetupCommand extends Command
             $steps[] = 'Wire MCP to your AI client: php bin/console vortos:mcp:install';
         }
 
+        if (($config['observability'] ?? 'normal') === 'otlp') {
+            $steps[] = 'Configure OTLP endpoints in config/metrics.php and config/tracing.php, or set OTEL_EXPORTER_OTLP_ENDPOINT.';
+        }
+
         $steps[] = 'Check readiness: curl http://localhost:8000/health/ready';
 
         return $steps;
@@ -841,8 +897,26 @@ final class SetupCommand extends Command
         $ignorePlatformReqs = $this->composerPlatformReqsProvidedByDocker($config);
 
         if ($dryRun) {
+            foreach ($this->packageInspector->pluginAllowCommandsFor($missing) as $command) {
+                $io->writeln('  <fg=gray>Would run:</> ' . $command);
+            }
             $io->writeln('  <fg=gray>Would run:</> ' . $this->packageInspector->requireCommand($missing, $ignorePlatformReqs));
             return true;
+        }
+
+        $pluginAllowCommands = $this->packageInspector->pluginAllowCommandsFor($missing);
+        if ($pluginAllowCommands !== []) {
+            foreach ($pluginAllowCommands as $command) {
+                $io->writeln('  Running: <info>' . $command . '</info>');
+            }
+            $io->writeln('');
+
+            if (!$this->packageInspector->allowPluginsFor($missing)) {
+                $io->warning('composer allow-plugins config failed. Run the commands above manually, then re-run vortos:setup.');
+                return false;
+            }
+
+            $io->writeln('');
         }
 
         $io->writeln('  Running: <info>' . $this->packageInspector->requireCommand($missing, $ignorePlatformReqs) . '</info>');
@@ -925,6 +999,7 @@ final class SetupCommand extends Command
             (bool) $config['mongo'] ? 'read_db.mongo' : 'read_db.none',
             'cache.' . str_replace('-', '_', (string) $config['cache']),
             'messaging.' . str_replace('-', '_', (string) $config['messaging']),
+            'observability.' . str_replace('-', '_', (string) ($config['observability'] ?? 'normal')),
             (bool) ($config['mcp'] ?? false) ? 'mcp.enabled' : 'mcp.disabled',
         ];
     }

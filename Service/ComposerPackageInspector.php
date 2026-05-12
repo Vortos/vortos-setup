@@ -6,6 +6,12 @@ namespace Vortos\Setup\Service;
 
 final class ComposerPackageInspector
 {
+    /** @var array<string, string> */
+    private const PACKAGE_PLUGIN_ALLOW_LIST = [
+        'open-telemetry/sdk' => 'tbachert/spi',
+        'open-telemetry/exporter-otlp' => 'php-http/discovery',
+    ];
+
     public function __construct(private readonly string $projectDir) {}
 
     /** @return string[] */
@@ -69,6 +75,51 @@ final class ComposerPackageInspector
     }
 
     /**
+     * @param string[] $packages
+     * @return string[]
+     */
+    public function pluginAllowCommandsFor(array $packages): array
+    {
+        return array_map(
+            static fn(string $plugin): string => 'composer config allow-plugins.' . $plugin . ' true',
+            $this->pluginsRequiredBy($packages),
+        );
+    }
+
+    /**
+     * Writes Composer allow-plugins config for plugins needed by the packages
+     * about to be installed. This prevents Composer from stopping for trust
+     * prompts during non-interactive setup.
+     *
+     * @param string[] $packages
+     */
+    public function allowPluginsFor(array $packages): bool
+    {
+        $plugins = $this->pluginsRequiredBy($packages);
+        if ($plugins === []) {
+            return true;
+        }
+
+        foreach ($plugins as $plugin) {
+            $cmd = implode(' ', [
+                escapeshellarg(PHP_BINARY),
+                escapeshellarg($this->findComposer()),
+                'config',
+                '--no-interaction',
+                escapeshellarg('allow-plugins.' . $plugin),
+                'true',
+            ]);
+
+            passthru($cmd, $exitCode);
+            if ($exitCode !== 0) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
      * Runs `composer require` for the given packages, streaming output directly
      * to the terminal. Returns true on success.
      *
@@ -117,6 +168,26 @@ final class ComposerPackageInspector
 
         // Fall back to composer on $PATH
         return 'composer';
+    }
+
+    /**
+     * @param string[] $packages
+     * @return string[]
+     */
+    private function pluginsRequiredBy(array $packages): array
+    {
+        $plugins = [];
+        $selected = array_fill_keys($packages, true);
+
+        foreach (self::PACKAGE_PLUGIN_ALLOW_LIST as $package => $plugin) {
+            if (isset($selected[$package])) {
+                $plugins[$plugin] = $plugin;
+            }
+        }
+
+        sort($plugins);
+
+        return array_values($plugins);
     }
 
     /** @return string[] */
