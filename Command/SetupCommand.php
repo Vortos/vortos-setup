@@ -413,10 +413,12 @@ final class SetupCommand extends Command
 
         $choices = [];
         foreach ($capabilities as $capability) {
-            $choices[$capability->key()] = $this->choiceLabel($capability);
+            $choices[$capability->key()] = $category === 'observability'
+                ? $capability->label()
+                : $this->choiceLabel($capability);
         }
 
-        return $this->askOption($input, $output, $io, $label, $choices, $default);
+        return $this->askOption($input, $output, $io, $label, $choices, $default, $category !== 'observability');
     }
 
     /**
@@ -429,36 +431,43 @@ final class SetupCommand extends Command
         string $label,
         array $choices,
         string $default,
+        bool $showKeys = true,
     ): string {
         $keys = array_keys($choices);
         $default = in_array($default, $keys, true) ? $default : $keys[0];
+        $displayChoices = $showKeys
+            ? array_map(
+                static fn(string $key, string $description): string => sprintf('%s - %s', $key, $description),
+                $keys,
+                array_values($choices),
+            )
+            : array_values($choices);
+        $displayDefault = $showKeys ? sprintf('%s - %s', $default, $choices[$default]) : $choices[$default];
 
         $selected = ($this->terminalMenu ?? new TerminalMenu())->choose(
             $input,
             $output,
             $label,
-            array_map(
-                static fn(string $key, string $description): string => sprintf('%s - %s', $key, $description),
-                $keys,
-                array_values($choices),
-            ),
-            sprintf('%s - %s', $default, $choices[$default]),
+            $displayChoices,
+            $displayDefault,
         );
 
         if ($selected === null) {
             $question = new ChoiceQuestion(
                 $this->choiceQuestionLabel($label),
-                array_map(
-                    static fn(string $key, string $description): string => sprintf('%s - %s', $key, $description),
-                    $keys,
-                    array_values($choices),
-                ),
+                $displayChoices,
                 $this->choiceQuestionDefault(array_search($default, $keys, true) ?: 0),
             );
             $question->setErrorMessage('Option %s is not valid.');
 
             /** @var string $selected */
             $selected = $io->askQuestion($question);
+        }
+
+        if (!$showKeys) {
+            $key = array_search($selected, $choices, true);
+
+            return is_string($key) ? $key : $default;
         }
 
         return substr($selected, 0, (int) strpos($selected, ' - '));
@@ -474,8 +483,8 @@ final class SetupCommand extends Command
     private function observabilityPlanLabel(string $value): string
     {
         return $value === 'otlp'
-            ? 'send to monitoring tools'
-            : 'built-in';
+            ? 'Native + OTLP Exporter'
+            : 'Native only';
     }
 
     private function choiceQuestionLabel(string $label): string
@@ -583,60 +592,121 @@ final class SetupCommand extends Command
     }
 
     /** @param array<string, mixed> $config @return array<string, string> */
+    // private function envValues(array $config, bool $regenerateSecrets = false): array
+    // {
+    //     $current = $this->envWriter->readKnownValues();
+    //     $projectName = $this->resolvedProjectName($current);
+
+    //     // Migrate passwords from old vendor-specific key names on repeat runs
+    //     if (!$regenerateSecrets) {
+    //         if (!isset($current['VORTOS_WRITE_DB_PASSWORD'])) {
+    //             $current['VORTOS_WRITE_DB_PASSWORD'] =
+    //                 $current['POSTGRES_PASSWORD']
+    //                 ?? $this->dsnPassword((string) ($current['VORTOS_WRITE_DB_DSN'] ?? ''))
+    //                 ?? null;
+    //         }
+    //         if (!isset($current['VORTOS_READ_DB_PASSWORD'])) {
+    //             $current['VORTOS_READ_DB_PASSWORD'] =
+    //                 $current['MONGO_INITDB_ROOT_PASSWORD']
+    //                 ?? $this->dsnPassword((string) ($current['VORTOS_READ_DB_DSN'] ?? ''))
+    //                 ?? null;
+    //         }
+    //     }
+
+    //     $writeDbPassword = $this->secret('VORTOS_WRITE_DB_PASSWORD', $current, $regenerateSecrets, 16);
+    //     $readDbPassword  = $this->secret('VORTOS_READ_DB_PASSWORD', $current, $regenerateSecrets, 16);
+    //     $writeDbHost     = (bool) $config['docker'] ? 'write_db' : '127.0.0.1';
+    //     $readDbHost      = (bool) $config['docker'] ? 'read_db' : '127.0.0.1';
+    //     $messagingDsn    = $config['messaging'] === 'in-memory'
+    //         ? 'in-memory://default'
+    //         : sprintf('kafka://%s', (bool) $config['docker'] ? 'kafka:9092' : '127.0.0.1:9092');
+
+    //     $values = [
+    //         'APP_ENV'              => 'dev',
+    //         'APP_DEBUG'            => 'true',
+    //         'VORTOS_WRITE_DB_DRIVER' => 'postgres',
+    //         'VORTOS_WRITE_DB_DSN'    => sprintf('pgsql://postgres:%s@%s:5432/%s', $writeDbPassword, $writeDbHost, $projectName),
+    //         'VORTOS_READ_DB_DRIVER'  => (bool) $config['mongo'] ? 'mongo' : 'none',
+    //         'VORTOS_READ_DB_DSN'     => (bool) $config['mongo'] ? sprintf('mongodb://root:%s@%s:27017', $readDbPassword, $readDbHost) : '',
+    //         'VORTOS_READ_DB_NAME'    => (bool) $config['mongo'] ? $projectName : '',
+    //         'VORTOS_CACHE_DRIVER'    => $config['cache'] === 'in-memory' ? 'in-memory' : 'redis',
+    //         'VORTOS_CACHE_DSN'       => sprintf('redis://%s:6379', (bool) $config['docker'] ? 'redis' : '127.0.0.1'),
+    //         'VORTOS_CACHE_PREFIX'    => ($_ENV['APP_ENV'] ?? 'dev') . '_' . $projectName . '_',
+    //         'VORTOS_MESSAGING_DRIVER' => $config['messaging'] === 'in-memory' ? 'in-memory' : 'kafka',
+    //         'VORTOS_MESSAGING_DSN'    => $messagingDsn,
+    //         'JWT_SECRET'           => $this->secret('JWT_SECRET', $current, $regenerateSecrets, 32),
+    //         'HEALTH_DETAILS'       => 'debug',
+    //         'HEALTH_TOKEN'         => $this->secret('HEALTH_TOKEN', $current, $regenerateSecrets, 24),
+    //         'HEALTH_EXPOSE_ERRORS' => 'false',
+    //     ];
+
+    //     if ((bool) $config['docker']) {
+    //         $values = $this->mergeDockerEnvValues(
+    //             $values,
+    //             $this->dockerEnvValues($config, $projectName, $writeDbPassword, $readDbPassword),
+    //         );
+    //     }
+
+    //     return $values;
+    // }
     private function envValues(array $config, bool $regenerateSecrets = false): array
     {
         $current = $this->envWriter->readKnownValues();
         $projectName = $this->resolvedProjectName($current);
 
-        // Migrate passwords from old vendor-specific key names on repeat runs
-        if (!$regenerateSecrets) {
-            if (!isset($current['VORTOS_WRITE_DB_PASSWORD'])) {
-                $current['VORTOS_WRITE_DB_PASSWORD'] =
-                    $current['POSTGRES_PASSWORD']
-                    ?? $this->dsnPassword((string) ($current['VORTOS_WRITE_DB_DSN'] ?? ''))
-                    ?? null;
-            }
-            if (!isset($current['VORTOS_READ_DB_PASSWORD'])) {
-                $current['VORTOS_READ_DB_PASSWORD'] =
-                    $current['MONGO_INITDB_ROOT_PASSWORD']
-                    ?? $this->dsnPassword((string) ($current['VORTOS_READ_DB_DSN'] ?? ''))
-                    ?? null;
-            }
+        // 1. App Section
+        $values = [
+            'APP_NAME'  => $projectName,
+            'APP_ENV'   => 'dev',
+            'APP_DEBUG' => 'true',
+        ];
+
+        // 2. HTTP / Runtime Section
+        if ($config['runtime'] === 'frankenphp') {
+            $values['SERVER_NAME']      = ':80';
+            $values['WORKER_NUM']       = '4';
+            $values['FRANKENPHP_WATCH'] = 'watch';
         }
 
+        // 3. Security Section
+        $values += [
+            'JWT_SECRET'           => $this->secret('JWT_SECRET', $current, $regenerateSecrets, 32),
+            'HEALTH_TOKEN'         => $this->secret('HEALTH_TOKEN', $current, $regenerateSecrets, 24),
+            'HEALTH_DETAILS'       => 'debug',
+            'HEALTH_EXPOSE_ERRORS' => 'false',
+        ];
+
+        // 4. Databases
         $writeDbPassword = $this->secret('VORTOS_WRITE_DB_PASSWORD', $current, $regenerateSecrets, 16);
         $readDbPassword  = $this->secret('VORTOS_READ_DB_PASSWORD', $current, $regenerateSecrets, 16);
         $writeDbHost     = (bool) $config['docker'] ? 'write_db' : '127.0.0.1';
         $readDbHost      = (bool) $config['docker'] ? 'read_db' : '127.0.0.1';
-        $messagingDsn    = $config['messaging'] === 'in-memory'
-            ? 'in-memory://default'
-            : sprintf('kafka://%s', (bool) $config['docker'] ? 'kafka:9092' : '127.0.0.1:9092');
 
-        $values = [
-            'APP_ENV'              => 'dev',
-            'APP_DEBUG'            => 'true',
-            'VORTOS_WRITE_DB_DRIVER' => 'postgres',
-            'VORTOS_WRITE_DB_DSN'    => sprintf('pgsql://postgres:%s@%s:5432/%s', $writeDbPassword, $writeDbHost, $projectName),
-            'VORTOS_READ_DB_DRIVER'  => (bool) $config['mongo'] ? 'mongo' : 'none',
-            'VORTOS_READ_DB_DSN'     => (bool) $config['mongo'] ? sprintf('mongodb://root:%s@%s:27017', $readDbPassword, $readDbHost) : '',
-            'VORTOS_READ_DB_NAME'    => (bool) $config['mongo'] ? $projectName : '',
-            'VORTOS_CACHE_DRIVER'    => $config['cache'] === 'in-memory' ? 'in-memory' : 'redis',
-            'VORTOS_CACHE_DSN'       => sprintf('redis://%s:6379', (bool) $config['docker'] ? 'redis' : '127.0.0.1'),
-            'VORTOS_CACHE_PREFIX'    => ($_ENV['APP_ENV'] ?? 'dev') . '_' . $projectName . '_',
-            'VORTOS_MESSAGING_DRIVER' => $config['messaging'] === 'in-memory' ? 'in-memory' : 'kafka',
-            'VORTOS_MESSAGING_DSN'    => $messagingDsn,
-            'JWT_SECRET'           => $this->secret('JWT_SECRET', $current, $regenerateSecrets, 32),
-            'HEALTH_DETAILS'       => 'debug',
-            'HEALTH_TOKEN'         => $this->secret('HEALTH_TOKEN', $current, $regenerateSecrets, 24),
-            'HEALTH_EXPOSE_ERRORS' => 'false',
+        $values += [
+            'VORTOS_WRITE_DB_DRIVER'   => 'postgres',
+            'VORTOS_WRITE_DB_DSN'      => sprintf('pgsql://postgres:%s@%s:5432/%s', $writeDbPassword, $writeDbHost, $projectName),
+            'VORTOS_WRITE_DB_USER'     => 'postgres',
+            'VORTOS_WRITE_DB_PASSWORD' => $writeDbPassword,
+            'VORTOS_WRITE_DB_NAME'     => $projectName,
+
+            'VORTOS_READ_DB_DRIVER'    => (bool) $config['mongo'] ? 'mongo' : 'none',
+            'VORTOS_READ_DB_DSN'       => (bool) $config['mongo'] ? sprintf('mongodb://root:%s@%s:27017', $readDbPassword, $readDbHost) : '',
+            'VORTOS_READ_DB_NAME'      => (bool) $config['mongo'] ? $projectName : '',
+            'VORTOS_READ_DB_USER'      => (bool) $config['mongo'] ? 'root' : '',
+            'VORTOS_READ_DB_PASSWORD'  => (bool) $config['mongo'] ? $readDbPassword : '',
         ];
 
-        if ((bool) $config['docker']) {
-            $values = $this->mergeDockerEnvValues(
-                $values,
-                $this->dockerEnvValues($config, $projectName, $writeDbPassword, $readDbPassword),
-            );
-        }
+        // 5. Cache & Messaging
+        $values += [
+            'VORTOS_CACHE_DRIVER'     => $config['cache'] === 'in-memory' ? 'in-memory' : 'redis',
+            'VORTOS_CACHE_DSN'        => sprintf('redis://%s:6379', (bool) $config['docker'] ? 'redis' : '127.0.0.1'),
+            'VORTOS_CACHE_PREFIX'     => 'dev_' . $projectName . '_',
+
+            'VORTOS_MESSAGING_DRIVER' => $config['messaging'] === 'in-memory' ? 'in-memory' : 'kafka',
+            'VORTOS_MESSAGING_DSN'    => $config['messaging'] === 'in-memory'
+                ? 'in-memory://default'
+                : sprintf('kafka://%s', (bool) $config['docker'] ? 'kafka:9092' : '127.0.0.1:9092'),
+        ];
 
         return $values;
     }
@@ -648,31 +718,33 @@ final class SetupCommand extends Command
      */
     private function mergeDockerEnvValues(array $values, array $dockerValues): array
     {
-        $ordered = [];
+        // $ordered = [];
 
-        foreach ($values as $key => $value) {
-            $ordered[$key] = $value;
+        // foreach ($values as $key => $value) {
+        //     $ordered[$key] = $value;
 
-            if ($key === 'VORTOS_WRITE_DB_DRIVER') {
-                foreach (['VORTOS_WRITE_DB_USER', 'VORTOS_WRITE_DB_PASSWORD', 'VORTOS_WRITE_DB_NAME'] as $dockerKey) {
-                    if (isset($dockerValues[$dockerKey])) {
-                        $ordered[$dockerKey] = $dockerValues[$dockerKey];
-                        unset($dockerValues[$dockerKey]);
-                    }
-                }
-            }
+        //     if ($key === 'VORTOS_WRITE_DB_DRIVER') {
+        //         foreach (['VORTOS_WRITE_DB_USER', 'VORTOS_WRITE_DB_PASSWORD', 'VORTOS_WRITE_DB_NAME'] as $dockerKey) {
+        //             if (isset($dockerValues[$dockerKey])) {
+        //                 $ordered[$dockerKey] = $dockerValues[$dockerKey];
+        //                 unset($dockerValues[$dockerKey]);
+        //             }
+        //         }
+        //     }
 
-            if ($key === 'VORTOS_READ_DB_DRIVER') {
-                foreach (['VORTOS_READ_DB_USER', 'VORTOS_READ_DB_PASSWORD'] as $dockerKey) {
-                    if (isset($dockerValues[$dockerKey])) {
-                        $ordered[$dockerKey] = $dockerValues[$dockerKey];
-                        unset($dockerValues[$dockerKey]);
-                    }
-                }
-            }
-        }
+        //     if ($key === 'VORTOS_READ_DB_DRIVER') {
+        //         foreach (['VORTOS_READ_DB_USER', 'VORTOS_READ_DB_PASSWORD'] as $dockerKey) {
+        //             if (isset($dockerValues[$dockerKey])) {
+        //                 $ordered[$dockerKey] = $dockerValues[$dockerKey];
+        //                 unset($dockerValues[$dockerKey]);
+        //             }
+        //         }
+        //     }
+        // }
 
-        return $ordered + $dockerValues;
+        // return $ordered + $dockerValues;
+
+        return array_merge($values, $dockerValues);
     }
 
     /**

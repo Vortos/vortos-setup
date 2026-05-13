@@ -107,13 +107,13 @@ final class SetupExtension extends Extension
         ],
         'vortos.setup_capability.observability.normal' => [
             'key' => 'observability.normal',
-            'label' => 'Built-in metrics and tracing',
+            'label' => 'Native (/metrics endpoint only)',
             'category' => 'observability',
             'packages' => [],
         ],
         'vortos.setup_capability.observability.otlp' => [
             'key' => 'observability.otlp',
-            'label' => 'Send metrics and traces to monitoring tools',
+            'label' => 'Native + OpenTelemetry (Adds OTLP Push Exporter)',
             'category' => 'observability',
             'packages' => [
                 'open-telemetry/api',
