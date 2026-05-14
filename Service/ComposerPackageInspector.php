@@ -223,6 +223,14 @@ final class ComposerPackageInspector
             return $env;
         }
 
+        // On Windows, proc_open with an absolute path containing spaces (e.g. "C:\Users\John
+        // Doe\project\composer.phar") is unreliable — CreateProcess does not apply shell quoting
+        // to argv elements when there is no intermediate shell. Prefer "composer" on PATH instead,
+        // which buildComposerArgv() wraps as "cmd /c composer" and works regardless of spaces.
+        if (PHP_OS_FAMILY === 'Windows') {
+            return 'composer';
+        }
+
         foreach (['composer.phar', 'composer'] as $name) {
             $path = $this->projectDir . DIRECTORY_SEPARATOR . $name;
             if (is_file($path)) {
