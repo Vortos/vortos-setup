@@ -657,8 +657,8 @@ final class SetupCommand extends Command
         // 1. App Section
         $values = [
             'APP_NAME'  => $projectName,
-            'APP_ENV'   => (bool) $config['docker'] ? 'prod' : 'dev',
-            'APP_DEBUG' => (bool) $config['docker'] ? 'false' : 'true',
+            'APP_ENV'   => 'dev',
+            'APP_DEBUG' => 'true',
         ];
 
         // 2. HTTP / Runtime Section

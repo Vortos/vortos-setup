@@ -185,7 +185,21 @@ final class ComposerPackageInspector
     /** @param string[] $argv */
     private function execComposer(array $argv): bool
     {
-        $process = proc_open($argv, [STDIN, STDOUT, STDERR], $pipes);
+        // On Windows, proc_open with an argv array cannot invoke .bat files — CreateProcess
+        // requires a shell. Strip any cmd /c wrapper added by buildComposerArgv(), then build
+        // a flat escaped string and pass it as a single command string so Windows handles it.
+        if (PHP_OS_FAMILY === 'Windows') {
+            if (($argv[0] ?? null) === 'cmd' && ($argv[1] ?? null) === '/c') {
+                $argv = array_slice($argv, 2);
+            }
+            $bin    = array_shift($argv);
+            $argv   = array_map('escapeshellarg', $argv);
+            $command = implode(' ', [$bin, ...$argv]);
+        } else {
+            $command = $argv;
+        }
+
+        $process = proc_open($command, [STDIN, STDOUT, STDERR], $pipes);
 
         if (!is_resource($process)) {
             return false;
@@ -217,18 +231,21 @@ final class ComposerPackageInspector
 
     private function findComposer(): string
     {
-        // Composer sets this when running post-install/post-create-project scripts
+        // Composer sets this when running post-install/post-create-project scripts.
+        // On Windows, skip it when the path contains spaces — proc_open (CreateProcess) does
+        // not reliably handle spaced paths even in array mode, so we fall through to PATH.
         $env = getenv('COMPOSER_BINARY');
         if ($env !== false && $env !== '' && is_file($env)) {
-            return $env;
+            if (PHP_OS_FAMILY !== 'Windows' || !str_contains($env, ' ')) {
+                return $env;
+            }
         }
 
-        // On Windows, proc_open with an absolute path containing spaces (e.g. "C:\Users\John
-        // Doe\project\composer.phar") is unreliable — CreateProcess does not apply shell quoting
-        // to argv elements when there is no intermediate shell. Prefer "composer" on PATH instead,
-        // which buildComposerArgv() wraps as "cmd /c composer" and works regardless of spaces.
+        // On Windows, prefer composer.bat explicitly — proc_open with a string command handles
+        // .bat files correctly via CreateProcess, while the bare "composer" name is an extensionless
+        // shell script that only works under Git Bash / WSL, not under cmd.exe.
         if (PHP_OS_FAMILY === 'Windows') {
-            return 'composer';
+            return 'composer.bat';
         }
 
         foreach (['composer.phar', 'composer'] as $name) {
@@ -238,7 +255,6 @@ final class ComposerPackageInspector
             }
         }
 
-        // Fall back to composer on $PATH
         return 'composer';
     }
 
