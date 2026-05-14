@@ -125,23 +125,10 @@ final class ComposerPackageInspector
             return true;
         }
 
-        $composer = $this->findComposer();
-        // Only prefix with PHP if we found a physical file (like a .phar)
-        $baseCmd = is_file($composer)
-            ? [escapeshellarg(PHP_BINARY), escapeshellarg($composer)]
-            : [escapeshellarg($composer)];
+        $base = $this->buildComposerArgv($this->findComposer());
 
         foreach ($plugins as $plugin) {
-            $cmd = implode(' ', [
-                ...$baseCmd,
-                'config',
-                '--no-interaction',
-                escapeshellarg('allow-plugins.' . $plugin),
-                'true',
-            ]);
-
-            passthru($cmd, $exitCode);
-            if ($exitCode !== 0) {
+            if (!$this->execComposer([...$base, 'config', '--no-interaction', 'allow-plugins.' . $plugin, 'true'])) {
                 return false;
             }
         }
@@ -186,28 +173,46 @@ final class ComposerPackageInspector
             return true;
         }
 
-        $composer = $this->findComposer();
-        $baseCmd = is_file($composer)
-            ? [escapeshellarg(PHP_BINARY), escapeshellarg($composer)]
-            : [escapeshellarg($composer)];
-
-        $args = array_map('escapeshellarg', $packages);
+        $base = $this->buildComposerArgv($this->findComposer());
         $ignoreArgs = array_map(
-            static fn(string $requirement): string => '--ignore-platform-req=' . escapeshellarg($requirement),
+            static fn(string $r): string => '--ignore-platform-req=' . $r,
             $ignorePlatformReqs,
         );
 
-        $cmd = implode(' ', [
-            ...$baseCmd,
-            'require',
-            '--no-interaction',
-            ...$ignoreArgs,
-            ...$args,
-        ]);
+        return $this->execComposer([...$base, 'require', '--no-interaction', ...$ignoreArgs, ...$packages]);
+    }
 
-        passthru($cmd, $exitCode);
+    /** @param string[] $argv */
+    private function execComposer(array $argv): bool
+    {
+        $process = proc_open($argv, [STDIN, STDOUT, STDERR], $pipes);
 
-        return $exitCode === 0;
+        if (!is_resource($process)) {
+            return false;
+        }
+
+        return proc_close($process) === 0;
+    }
+
+    /** @return string[] */
+    private function buildComposerArgv(string $composer): array
+    {
+        if (str_ends_with(strtolower($composer), '.phar')) {
+            return [PHP_BINARY, $composer];
+        }
+
+        // On Windows, .bat/.cmd files and bare PATH names (e.g. "composer") need
+        // cmd.exe — CreateProcess does not resolve PATHEXT extensions on its own.
+        if (PHP_OS_FAMILY === 'Windows') {
+            if (
+                preg_match('/\.(bat|cmd)$/i', $composer) === 1
+                || (!str_contains($composer, '/') && !str_contains($composer, '\\'))
+            ) {
+                return ['cmd', '/c', $composer];
+            }
+        }
+
+        return [$composer];
     }
 
     private function findComposer(): string
