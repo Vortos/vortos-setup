@@ -20,7 +20,7 @@ final class ComposerPackageInspector
         $packages = [];
 
         foreach ($this->composerFiles() as $file) {
-            $data = json_decode((string) file_get_contents($file), true);
+            $data = json_decode((string) file_get_contents($file), true, 512, JSON_THROW_ON_ERROR);
             if (!is_array($data)) {
                 continue;
             }
@@ -43,7 +43,7 @@ final class ComposerPackageInspector
 
         $rootComposer = $this->projectDir . DIRECTORY_SEPARATOR . 'composer.json';
         if (is_file($rootComposer)) {
-            $root = json_decode((string) file_get_contents($rootComposer), true);
+            $root = json_decode((string) file_get_contents($rootComposer), true, 512, JSON_THROW_ON_ERROR);
             foreach (['require', 'require-dev'] as $section) {
                 foreach (($root[$section] ?? []) as $package => $_constraint) {
                     if (is_string($package)) {
@@ -93,31 +93,6 @@ final class ComposerPackageInspector
      *
      * @param string[] $packages
      */
-    // public function allowPluginsFor(array $packages): bool
-    // {
-    //     $plugins = $this->pluginsRequiredBy($packages);
-    //     if ($plugins === []) {
-    //         return true;
-    //     }
-
-    //     foreach ($plugins as $plugin) {
-    //         $cmd = implode(' ', [
-    //             escapeshellarg(PHP_BINARY),
-    //             escapeshellarg($this->findComposer()),
-    //             'config',
-    //             '--no-interaction',
-    //             escapeshellarg('allow-plugins.' . $plugin),
-    //             'true',
-    //         ]);
-
-    //         passthru($cmd, $exitCode);
-    //         if ($exitCode !== 0) {
-    //             return false;
-    //         }
-    //     }
-
-    //     return true;
-    // }
     public function allowPluginsFor(array $packages): bool
     {
         $plugins = $this->pluginsRequiredBy($packages);
@@ -143,30 +118,6 @@ final class ComposerPackageInspector
      * @param string[] $packages
      * @param string[] $ignorePlatformReqs
      */
-    // public function runRequire(array $packages, array $ignorePlatformReqs = []): bool
-    // {
-    //     if ($packages === []) {
-    //         return true;
-    //     }
-
-    //     $args = array_map('escapeshellarg', $packages);
-    //     $ignoreArgs = array_map(
-    //         static fn(string $requirement): string => '--ignore-platform-req=' . escapeshellarg($requirement),
-    //         $ignorePlatformReqs,
-    //     );
-    //     $cmd  = implode(' ', [
-    //         escapeshellarg(PHP_BINARY),
-    //         escapeshellarg($this->findComposer()),
-    //         'require',
-    //         '--no-interaction',
-    //         ...$ignoreArgs,
-    //         ...$args,
-    //     ]);
-
-    //     passthru($cmd, $exitCode);
-
-    //     return $exitCode === 0;
-    // }
     public function runRequire(array $packages, array $ignorePlatformReqs = []): bool
     {
         if ($packages === []) {

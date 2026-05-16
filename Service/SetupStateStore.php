@@ -19,7 +19,7 @@ final class SetupStateStore
             return [];
         }
 
-        $data = json_decode((string) file_get_contents($path), true);
+        $data = json_decode((string) file_get_contents($path), true, 512, JSON_THROW_ON_ERROR);
 
         return is_array($data) ? $data : [];
     }
@@ -32,7 +32,7 @@ final class SetupStateStore
         }
 
         $state['updated_at'] = (new \DateTimeImmutable())->format(\DateTimeInterface::ATOM);
-        file_put_contents($this->path(), json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
+        file_put_contents($this->path(), json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n", LOCK_EX);
     }
 
     public function path(): string

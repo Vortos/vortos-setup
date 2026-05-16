@@ -133,7 +133,7 @@ final class EnvironmentFileWriter
                 copy($path, $backupPath);
             }
 
-            file_put_contents($path, implode("\n", $lines) . "\n");
+            file_put_contents($path, implode("\n", $lines) . "\n", LOCK_EX);
         }
 
         return [
