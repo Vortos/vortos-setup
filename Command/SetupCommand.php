@@ -592,63 +592,6 @@ final class SetupCommand extends Command
     }
 
     /** @param array<string, mixed> $config @return array<string, string> */
-    // private function envValues(array $config, bool $regenerateSecrets = false): array
-    // {
-    //     $current = $this->envWriter->readKnownValues();
-    //     $projectName = $this->resolvedProjectName($current);
-
-    //     // Migrate passwords from old vendor-specific key names on repeat runs
-    //     if (!$regenerateSecrets) {
-    //         if (!isset($current['VORTOS_WRITE_DB_PASSWORD'])) {
-    //             $current['VORTOS_WRITE_DB_PASSWORD'] =
-    //                 $current['POSTGRES_PASSWORD']
-    //                 ?? $this->dsnPassword((string) ($current['VORTOS_WRITE_DB_DSN'] ?? ''))
-    //                 ?? null;
-    //         }
-    //         if (!isset($current['VORTOS_READ_DB_PASSWORD'])) {
-    //             $current['VORTOS_READ_DB_PASSWORD'] =
-    //                 $current['MONGO_INITDB_ROOT_PASSWORD']
-    //                 ?? $this->dsnPassword((string) ($current['VORTOS_READ_DB_DSN'] ?? ''))
-    //                 ?? null;
-    //         }
-    //     }
-
-    //     $writeDbPassword = $this->secret('VORTOS_WRITE_DB_PASSWORD', $current, $regenerateSecrets, 16);
-    //     $readDbPassword  = $this->secret('VORTOS_READ_DB_PASSWORD', $current, $regenerateSecrets, 16);
-    //     $writeDbHost     = (bool) $config['docker'] ? 'write_db' : '127.0.0.1';
-    //     $readDbHost      = (bool) $config['docker'] ? 'read_db' : '127.0.0.1';
-    //     $messagingDsn    = $config['messaging'] === 'in-memory'
-    //         ? 'in-memory://default'
-    //         : sprintf('kafka://%s', (bool) $config['docker'] ? 'kafka:9092' : '127.0.0.1:9092');
-
-    //     $values = [
-    //         'APP_ENV'              => 'dev',
-    //         'APP_DEBUG'            => 'true',
-    //         'VORTOS_WRITE_DB_DRIVER' => 'postgres',
-    //         'VORTOS_WRITE_DB_DSN'    => sprintf('pgsql://postgres:%s@%s:5432/%s', $writeDbPassword, $writeDbHost, $projectName),
-    //         'VORTOS_READ_DB_DRIVER'  => (bool) $config['mongo'] ? 'mongo' : 'none',
-    //         'VORTOS_READ_DB_DSN'     => (bool) $config['mongo'] ? sprintf('mongodb://root:%s@%s:27017', $readDbPassword, $readDbHost) : '',
-    //         'VORTOS_READ_DB_NAME'    => (bool) $config['mongo'] ? $projectName : '',
-    //         'VORTOS_CACHE_DRIVER'    => $config['cache'] === 'in-memory' ? 'in-memory' : 'redis',
-    //         'VORTOS_CACHE_DSN'       => sprintf('redis://%s:6379', (bool) $config['docker'] ? 'redis' : '127.0.0.1'),
-    //         'VORTOS_CACHE_PREFIX'    => ($_ENV['APP_ENV'] ?? 'dev') . '_' . $projectName . '_',
-    //         'VORTOS_MESSAGING_DRIVER' => $config['messaging'] === 'in-memory' ? 'in-memory' : 'kafka',
-    //         'VORTOS_MESSAGING_DSN'    => $messagingDsn,
-    //         'JWT_SECRET'           => $this->secret('JWT_SECRET', $current, $regenerateSecrets, 32),
-    //         'HEALTH_DETAILS'       => 'debug',
-    //         'HEALTH_TOKEN'         => $this->secret('HEALTH_TOKEN', $current, $regenerateSecrets, 24),
-    //         'HEALTH_EXPOSE_ERRORS' => 'false',
-    //     ];
-
-    //     if ((bool) $config['docker']) {
-    //         $values = $this->mergeDockerEnvValues(
-    //             $values,
-    //             $this->dockerEnvValues($config, $projectName, $writeDbPassword, $readDbPassword),
-    //         );
-    //     }
-
-    //     return $values;
-    // }
     private function envValues(array $config, bool $regenerateSecrets = false): array
     {
         $current = $this->envWriter->readKnownValues();
@@ -714,63 +657,6 @@ final class SetupCommand extends Command
     }
 
     /**
-     * @param array<string, string> $values
-     * @param array<string, string> $dockerValues
-     * @return array<string, string>
-     */
-    private function mergeDockerEnvValues(array $values, array $dockerValues): array
-    {
-        // $ordered = [];
-
-        // foreach ($values as $key => $value) {
-        //     $ordered[$key] = $value;
-
-        //     if ($key === 'VORTOS_WRITE_DB_DRIVER') {
-        //         foreach (['VORTOS_WRITE_DB_USER', 'VORTOS_WRITE_DB_PASSWORD', 'VORTOS_WRITE_DB_NAME'] as $dockerKey) {
-        //             if (isset($dockerValues[$dockerKey])) {
-        //                 $ordered[$dockerKey] = $dockerValues[$dockerKey];
-        //                 unset($dockerValues[$dockerKey]);
-        //             }
-        //         }
-        //     }
-
-        //     if ($key === 'VORTOS_READ_DB_DRIVER') {
-        //         foreach (['VORTOS_READ_DB_USER', 'VORTOS_READ_DB_PASSWORD'] as $dockerKey) {
-        //             if (isset($dockerValues[$dockerKey])) {
-        //                 $ordered[$dockerKey] = $dockerValues[$dockerKey];
-        //                 unset($dockerValues[$dockerKey]);
-        //             }
-        //         }
-        //     }
-        // }
-
-        // return $ordered + $dockerValues;
-
-        return array_merge($values, $dockerValues);
-    }
-
-    /**
-     * @param array<string, mixed> $config
-     * @return array<string, string>
-     */
-    private function dockerEnvValues(array $config, string $projectName, string $writeDbPassword, string $readDbPassword): array
-    {
-        $values = [];
-        $registry = $this->capabilities();
-
-        foreach ($this->selectedCapabilityKeys($config) as $key) {
-            if (!$registry->has($key)) {
-                continue;
-            }
-
-            $password = str_starts_with($key, 'write_db.') ? $writeDbPassword : $readDbPassword;
-            $values += $registry->get($key)->dockerEnv($projectName, $password);
-        }
-
-        return $values;
-    }
-
-    /**
      * @param array<string, mixed> $config
      * @return array{services: array<string, bool>}
      */
@@ -784,17 +670,6 @@ final class SetupCommand extends Command
                 'worker' => $config['messaging'] === 'kafka',
             ],
         ];
-    }
-
-    private function dsnPassword(string $dsn): ?string
-    {
-        if ($dsn === '') {
-            return null;
-        }
-
-        $password = parse_url($dsn, PHP_URL_PASS);
-
-        return is_string($password) && $password !== '' ? urldecode($password) : null;
     }
 
     /** @param array<string, mixed> $config @return string[] */
