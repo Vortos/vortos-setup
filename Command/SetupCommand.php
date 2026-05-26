@@ -33,7 +33,7 @@ final class SetupCommand extends Command
             'database' => 'docker-postgres',
             'cache' => 'redis',
             'messaging' => 'kafka',
-            'mongo' => true,
+            'read_db' => 'mongo',
             'observability' => 'normal',
             'mcp' => true,
         ],
@@ -43,7 +43,7 @@ final class SetupCommand extends Command
             'database' => 'docker-postgres',
             'cache' => 'redis',
             'messaging' => 'kafka',
-            'mongo' => true,
+            'read_db' => 'mongo',
             'observability' => 'normal',
             'mcp' => true,
         ],
@@ -53,7 +53,7 @@ final class SetupCommand extends Command
             'database' => 'local-postgres',
             'cache' => 'in-memory',
             'messaging' => 'in-memory',
-            'mongo' => false,
+            'read_db' => 'none',
             'observability' => 'normal',
             'mcp' => true,
         ],
@@ -63,7 +63,7 @@ final class SetupCommand extends Command
             'database' => 'local-postgres',
             'cache' => 'in-memory',
             'messaging' => 'in-memory',
-            'mongo' => false,
+            'read_db' => 'none',
             'observability' => 'normal',
             'mcp' => false,
         ],
@@ -144,7 +144,7 @@ final class SetupCommand extends Command
         $checks = $this->checker->check(
             (bool) $config['docker'],
             $config['cache'] === 'redis',
-            (bool) $config['mongo'],
+            $config['read_db'] === 'mongo',
             $config['messaging'] === 'kafka',
         );
 
@@ -192,7 +192,7 @@ final class SetupCommand extends Command
             'database' => $config['database'],
             'cache' => $config['cache'],
             'messaging' => $config['messaging'],
-            'mongo' => $config['mongo'],
+            'read_db' => $config['read_db'],
             'observability' => $config['observability'] ?? 'normal',
             'mcp' => $config['mcp'],
         ];
@@ -349,7 +349,7 @@ final class SetupCommand extends Command
             $io,
             'read_db',
             'Choose read database',
-            (bool) $config['mongo'] ? 'read_db.mongo' : 'read_db.none',
+            'read_db.' . str_replace('-', '_', (string) $config['read_db']),
         ));
         $cache = $this->capabilityValue($this->askCapability(
             $input,
@@ -392,7 +392,7 @@ final class SetupCommand extends Command
             'database' => $database,
             'cache' => $cache,
             'messaging' => $messaging,
-            'mongo' => $readDatabase === 'mongo',
+            'read_db' => $readDatabase,
             'observability' => $observability,
             'mcp' => $mcp === 'enabled',
         ];
@@ -566,7 +566,7 @@ final class SetupCommand extends Command
         $io->writeln(sprintf('  Preset:    <info>%s</info>', (string) $config['preset']));
         $io->writeln(sprintf('  Runtime:   %s', (string) $config['runtime']));
         $io->writeln(sprintf('  Write DB:  %s', (string) $config['database']));
-        $io->writeln(sprintf('  Read DB:   %s', (bool) $config['mongo'] ? 'mongo' : 'none'));
+        $io->writeln(sprintf('  Read DB:   %s', (string) $config['read_db']));
         $io->writeln(sprintf('  Cache:     %s', (string) $config['cache']));
         $io->writeln(sprintf('  Messaging: %s', (string) $config['messaging']));
         $io->writeln(sprintf('  Monitoring: %s', $this->observabilityPlanLabel((string) ($config['observability'] ?? 'normal'))));
@@ -622,24 +622,25 @@ final class SetupCommand extends Command
 
         // 4. Databases
         $writeDbPassword = $this->secret('VORTOS_WRITE_DB_PASSWORD', $current, $regenerateSecrets, 16);
-        $readDbPassword  = $this->secret('VORTOS_READ_DB_PASSWORD', $current, $regenerateSecrets, 16);
         $writeDbHost     = (bool) $config['docker'] ? 'write_db' : '127.0.0.1';
-        $readDbHost      = (bool) $config['docker'] ? 'read_db' : '127.0.0.1';
+        $writeDbDsn      = sprintf('pgsql://postgres:%s@%s:5432/%s', $writeDbPassword, $writeDbHost, $projectName);
 
         $values += [
             'VORTOS_WRITE_DB_DRIVER'   => 'postgres',
-            'VORTOS_WRITE_DB_DSN'      => sprintf('pgsql://postgres:%s@%s:5432/%s', $writeDbPassword, $writeDbHost, $projectName),
+            'VORTOS_WRITE_DB_DSN'      => $writeDbDsn,
             'VORTOS_WRITE_DB_USER'     => 'postgres',
             'VORTOS_WRITE_DB_PASSWORD' => $writeDbPassword,
             'VORTOS_WRITE_DB_NAME'     => $projectName,
-
-            'VORTOS_READ_DB_DRIVER'    => (bool) $config['mongo'] ? 'mongo' : 'none',
-            'VORTOS_READ_DB_DSN'       => (bool) $config['mongo'] ? sprintf('mongodb://root:%s@%s:27017', $readDbPassword, $readDbHost) : '',
-            'VORTOS_READ_DB_NAME'      => (bool) $config['mongo'] ? $projectName : '',
-            'VORTOS_READ_DB_USER'      => (bool) $config['mongo'] ? 'root' : '',
-            'VORTOS_READ_DB_PASSWORD'  => (bool) $config['mongo'] ? $readDbPassword : '',
-            'VORTOS_CURSOR_SECRET'     => (bool) $config['mongo'] ? $this->secret('VORTOS_CURSOR_SECRET', $current, $regenerateSecrets, 32) : '',
         ];
+
+        $values += $this->readDbEnvValues(
+            (string) $config['read_db'],
+            (bool) $config['docker'],
+            $current,
+            $regenerateSecrets,
+            $writeDbDsn,
+            $projectName,
+        );
 
         // 5. Cache & Messaging
         $values += [
@@ -664,7 +665,8 @@ final class SetupCommand extends Command
     {
         return [
             'services' => [
-                'read_db' => (bool) $config['mongo'],
+                'read_db' => $config['read_db'] === 'mongo',
+                'read_pg' => $config['read_db'] === 'postgres-dedicated',
                 'redis' => $config['cache'] === 'redis',
                 'kafka' => $config['messaging'] === 'kafka',
                 'worker' => $config['messaging'] === 'kafka',
@@ -816,6 +818,66 @@ final class SetupCommand extends Command
         return $this->projectName();
     }
 
+    /**
+     * @param array<string, string> $current
+     * @return array<string, string>
+     */
+    private function readDbEnvValues(
+        string $readDb,
+        bool $docker,
+        array $current,
+        bool $regenerateSecrets,
+        string $writeDbDsn,
+        string $projectName,
+    ): array {
+        if ($readDb === 'mongo') {
+            $pwd  = $this->secret('VORTOS_READ_DB_PASSWORD', $current, $regenerateSecrets, 16);
+            $host = $docker ? 'read_db' : '127.0.0.1';
+            return [
+                'VORTOS_READ_DB_DRIVER'   => 'mongo',
+                'VORTOS_READ_DB_DSN'      => sprintf('mongodb://root:%s@%s:27017', $pwd, $host),
+                'VORTOS_READ_DB_NAME'     => $projectName,
+                'VORTOS_READ_DB_USER'     => 'root',
+                'VORTOS_READ_DB_PASSWORD' => $pwd,
+                'VORTOS_CURSOR_SECRET'    => $this->secret('VORTOS_CURSOR_SECRET', $current, $regenerateSecrets, 32),
+            ];
+        }
+
+        if ($readDb === 'same-as-write') {
+            return [
+                'VORTOS_READ_DB_DRIVER'   => 'postgres',
+                'VORTOS_READ_DB_DSN'      => $writeDbDsn,
+                'VORTOS_READ_DB_NAME'     => '',
+                'VORTOS_READ_DB_USER'     => '',
+                'VORTOS_READ_DB_PASSWORD' => '',
+                'VORTOS_CURSOR_SECRET'    => '',
+            ];
+        }
+
+        if ($readDb === 'postgres-dedicated') {
+            $pwd  = $this->secret('VORTOS_READ_DB_PASSWORD', $current, $regenerateSecrets, 16);
+            $host = $docker ? 'read_pg' : '127.0.0.1';
+            $port = $docker ? '5432' : '5433';
+            return [
+                'VORTOS_READ_DB_DRIVER'   => 'postgres',
+                'VORTOS_READ_DB_DSN'      => sprintf('pgsql://postgres:%s@%s:%s/%s', $pwd, $host, $port, $projectName),
+                'VORTOS_READ_DB_NAME'     => $projectName,
+                'VORTOS_READ_DB_USER'     => 'postgres',
+                'VORTOS_READ_DB_PASSWORD' => $pwd,
+                'VORTOS_CURSOR_SECRET'    => '',
+            ];
+        }
+
+        return [
+            'VORTOS_READ_DB_DRIVER'   => 'none',
+            'VORTOS_READ_DB_DSN'      => '',
+            'VORTOS_READ_DB_NAME'     => '',
+            'VORTOS_READ_DB_USER'     => '',
+            'VORTOS_READ_DB_PASSWORD' => '',
+            'VORTOS_CURSOR_SECRET'    => '',
+        ];
+    }
+
     /** @param array<string, string> $current */
     private function secret(string $key, array $current, bool $regenerate, int $bytes): string
     {
@@ -945,7 +1007,7 @@ final class SetupCommand extends Command
         return [
             'runtime.' . str_replace('-', '_', (string) $config['runtime']),
             'write_db.' . str_replace('-', '_', $dbValue),
-            (bool) $config['mongo'] ? 'read_db.mongo' : 'read_db.none',
+            'read_db.' . str_replace('-', '_', (string) $config['read_db']),
             'cache.' . str_replace('-', '_', (string) $config['cache']),
             'messaging.' . str_replace('-', '_', (string) $config['messaging']),
             'observability.' . str_replace('-', '_', (string) ($config['observability'] ?? 'normal')),
@@ -965,7 +1027,7 @@ final class SetupCommand extends Command
 
         $requirements = [];
 
-        if ((bool) $config['mongo']) {
+        if ($config['read_db'] === 'mongo') {
             $requirements[] = 'ext-mongodb';
         }
 
