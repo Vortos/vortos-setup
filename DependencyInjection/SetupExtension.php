@@ -81,6 +81,23 @@ final class SetupExtension extends Extension
                 'VORTOS_READ_DB_PASSWORD' => '{password}',
             ],
         ],
+        'vortos.setup_capability.read_db.same_as_write' => [
+            'key' => 'read_db.same_as_write',
+            'label' => 'Same as write database',
+            'category' => 'read_db',
+            'packages' => [],
+        ],
+        'vortos.setup_capability.read_db.postgres_dedicated' => [
+            'key' => 'read_db.postgres_dedicated',
+            'label' => 'PostgreSQL (dedicated read DB)',
+            'category' => 'read_db',
+            'packages' => [],
+            'docker_env' => [
+                'VORTOS_READ_DB_USER' => 'postgres',
+                'VORTOS_READ_DB_PASSWORD' => '{password}',
+                'VORTOS_READ_DB_NAME' => '{project}',
+            ],
+        ],
         'vortos.setup_capability.cache.redis' => [
             'key' => 'cache.redis',
             'label' => 'Redis',
