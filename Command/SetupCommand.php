@@ -664,6 +664,12 @@ final class SetupCommand extends Command
     private function dockerPublishOptions(array $config): array
     {
         return [
+            // Setup scaffolds a project's Docker files, so writing over what is there is its
+            // whole job and `--no-docker-overwrite` is how a caller declines it. The publisher
+            // defaults the other way — it refuses to silently revert a file somebody has since
+            // tuned — which is right for `vortos:docker:publish` against a mature app but would
+            // make re-running setup a no-op. Backups are still taken either way.
+            'overwriteDiverged' => true,
             'services' => [
                 'read_db' => $config['read_db'] === 'mongo',
                 'read_pg' => $config['read_db'] === 'postgres-dedicated',
